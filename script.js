@@ -208,8 +208,11 @@
     // 5) 임계값을 절대값으로 고정하면 사진마다 결과가 들쭉날쭉하다.
     //    이 사진 자신의 분포에서 "전체 픽셀의 상위 몇 %를 선의 씨앗으로 쓸지"로 정해 일관성을 준다.
     //    지수 곡선이라 낮은 쪽(정교한 조절이 필요한 구간)이 촘촘하다.
+    //    슬라이더는 115까지 열어뒀다. 곡선은 그대로라 100 이하 눈금의 의미는 변하지 않고
+    //    (기존에 맞춰둔 세팅이 그대로 재현된다) 100 너머만 더 촘촘한 구간으로 확장된다.
+    //    130까지 열어봤더니 화면의 98%가 검게 차버려서(측정) 쓸모없는 구간은 잘라냈다.
     const sensitivityPct = parseFloat(sensitivity.value);
-    const seedPct = 0.05 * Math.pow(100, sensitivityPct / 100); // 0.05% ~ 5%
+    const seedPct = 0.05 * Math.pow(100, sensitivityPct / 100); // 0.05%(0) ~ 5%(100) ~ 10%(115)
     const high = percentile(score, seedPct);
     const low = high * 0.5;
     // 강한 선에서 출발해 이어지는 약한 선만 살린다 → 흩어진 점이 아니라 이어진 윤곽선.
@@ -396,8 +399,12 @@
   }
 
   // 전체 픽셀 중 상위 keepPct% 지점의 값을 구한다(히스토그램 근사).
+  //
+  // 칸 수가 적으면 선을 많이 뽑는 구간(=임계값이 낮은 구간)에서 한 칸에 픽셀이 수만 개씩 몰려,
+  // 슬라이더를 움직여도 같은 칸에 머물러 결과가 전혀 안 변한다(선 개수 100과 105가 동일했던 원인).
+  // 칸을 늘리고, 마지막 칸 안에서 선형 보간까지 해서 연속적으로 움직이게 한다.
   function percentile(values, keepPct) {
-    const BINS = 512;
+    const BINS = 4096;
     let max = 0;
     for (let i = 0; i < values.length; i++) if (values[i] > max) max = values[i];
     if (max <= 0) return Infinity;
@@ -409,11 +416,16 @@
       if (v > 0) hist[(v * scale) | 0]++;
     }
 
-    const keep = Math.max(1, Math.round(values.length * keepPct / 100));
+    const keep = Math.max(1, values.length * keepPct / 100);
     let acc = 0;
     for (let b = BINS - 1; b >= 0; b--) {
-      acc += hist[b];
-      if (acc >= keep) return b / scale;
+      const count = hist[b];
+      if (acc + count >= keep) {
+        // 이 칸 안에서 위쪽부터 채운다고 보고 보간 (칸 경계에서 계단처럼 튀지 않도록)
+        const frac = count > 0 ? (keep - acc) / count : 0;
+        return (b + 1 - frac) / scale;
+      }
+      acc += count;
     }
     return 0;
   }
