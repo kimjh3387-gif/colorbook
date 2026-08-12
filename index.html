@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>색칠공부 변환기 – Coloring Page Maker</title>
+<meta name="description" content="사진을 업로드하면 색을 다 빼고 색칠공부(coloring book) 라인아트로 바꿔주는 도구. 서버 업로드 없이 브라우저 안에서만 처리됩니다.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🖍️</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon">🖍️</span>
+      <div>
+        <h1>색칠공부 변환기</h1>
+        <p class="subtitle">사진을 넣으면 색을 빼고 색칠할 수 있는 윤곽선 그림으로 바꿔줘요</p>
+      </div>
+    </div>
+    <p class="privacy-badge">🔒 이미지는 서버로 전송되지 않아요 · 브라우저 안에서만 처리</p>
+  </header>
+
+  <main class="layout">
+    <aside class="panel">
+      <section class="upload-zone" id="dropZone">
+        <input type="file" id="fileInput" accept="image/*" hidden>
+        <div class="upload-inner" id="uploadPrompt">
+          <span class="upload-icon">📷</span>
+          <p><strong>클릭</strong>하거나 이미지를 <strong>드래그</strong>하세요</p>
+          <p class="hint">JPG, PNG 등 · 파일은 이 기기 안에서만 처리돼요</p>
+        </div>
+      </section>
+
+      <section class="controls" id="controls" hidden>
+        <div class="control-row">
+          <label for="sensitivity">선 민감도 <span class="value" id="sensitivityVal">50</span></label>
+          <input type="range" id="sensitivity" min="0" max="100" value="50">
+          <p class="hint">높일수록 세밀한 선까지 더 많이 잡아요</p>
+        </div>
+        <div class="control-row">
+          <label for="thickness">선 굵기 <span class="value" id="thicknessVal">1</span></label>
+          <input type="range" id="thickness" min="0" max="3" value="1">
+          <p class="hint">숫자가 클수록 선이 굵어져요</p>
+        </div>
+        <div class="control-row">
+          <label for="denoise">잡티 제거 <span class="value" id="denoiseVal">1</span></label>
+          <input type="range" id="denoise" min="0" max="3" value="1">
+          <p class="hint">사진 노이즈로 생기는 자잘한 선을 줄여요</p>
+        </div>
+
+        <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>
+        <button class="btn-primary" id="downloadBtn" type="button">🖨️ PNG로 다운로드</button>
+        <button class="btn-ghost" id="newImageBtn" type="button">다른 이미지 선택</button>
+      </section>
+    </aside>
+
+    <section class="preview">
+      <div class="preview-empty" id="previewEmpty">
+        <span class="upload-icon big">🎨</span>
+        <p>왼쪽에서 이미지를 올리면 여기에 결과가 나와요</p>
+      </div>
+
+      <div class="preview-grid" id="previewGrid" hidden>
+        <div class="preview-card">
+          <h2>원본</h2>
+          <div class="canvas-wrap">
+            <canvas id="originalCanvas"></canvas>
+          </div>
+        </div>
+        <div class="preview-card">
+          <h2>색칠공부 버전</h2>
+          <div class="canvas-wrap checker">
+            <canvas id="resultCanvas"></canvas>
+            <div class="processing-overlay" id="processingOverlay" hidden>변환 중…</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>모든 변환은 이 브라우저 안에서만 일어나요. 새로고침하면 결과는 사라지니 필요하면 먼저 다운로드하세요.</p>
+  </footer>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
