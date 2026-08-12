@@ -4,7 +4,6 @@
 
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
-  const uploadPrompt = document.getElementById('uploadPrompt');
   const controls = document.getElementById('controls');
   const previewEmpty = document.getElementById('previewEmpty');
   const previewGrid = document.getElementById('previewGrid');
@@ -110,6 +109,7 @@
     if (!sourceImage) return;
     if (renderQueued) return;
     renderQueued = true;
+    processingOverlay.textContent = '변환 중…';
     processingOverlay.hidden = false;
     // requestAnimationFrame에 의존하면 탭이 백그라운드/비표시 상태일 때 콜백이 멈춘다.
     // setTimeout만 사용해 화면 표시 여부와 무관하게 실행되도록 한다.
@@ -129,6 +129,15 @@
   }
 
   // ---------- 이미지 처리 파이프라인 ----------
+  //
+  // 목표는 "명암을 흑백으로 바꾸기"가 아니라 컬러링북처럼 **이어진 뚜렷한 윤곽선**을 뽑는 것.
+  // 밝기 차이에 그냥 임계값을 걸면 점각(speckle)이 흩뿌려지므로, 아래 순서로 처리한다.
+  //   1) 블러로 잔 텍스처를 스케일 단위로 지우고
+  //   2) 그 스케일에 맞춘 간격으로 밝기 변화(그래디언트)를 재고
+  //   3) 변화가 가장 급한 능선 한 줄만 남기고(비최대 억제)
+  //   4) 강한 선에서 이어지는 약한 선만 살려 끊긴 점을 버리고(히스테리시스)
+  //   5) 그래도 남은 작은 얼룩은 덩어리 크기로 제거한 뒤
+  //   6) 원하는 굵기로 두껍게 만든다.
   function render() {
     const { width, height } = fitSize(sourceImage.naturalWidth, sourceImage.naturalHeight);
     resultCanvas.width = width;
@@ -137,53 +146,56 @@
     const src = document.createElement('canvas');
     src.width = width;
     src.height = height;
-    const sctx = src.getContext('2d');
+    const sctx = src.getContext('2d', { willReadFrequently: true });
     sctx.drawImage(sourceImage, 0, 0, width, height);
     const imageData = sctx.getImageData(0, 0, width, height);
 
-    const rawGray = toGrayscale(imageData);
+    const gray = toGrayscale(imageData);
 
-    const denoiseRadius = parseInt(denoise.value, 10);
-    // sigma1(약한 블러)은 denoise 슬라이더 그대로, sigma2(강한 블러)는 항상 그 2배.
-    // 두 블러의 "차이(Difference of Gaussians)"를 윤곽선으로 쓴다.
-    //  - 매끈한 그라데이션(하늘, 조명 등)은 어떤 블러를 먹여도 그대로라 차이가 0에 가까움
-    //  - 잔 텍스처는 sigma1 단계에서 이미 뭉개지므로 두 블러의 차이가 거의 없음
-    //  - 실제 큰 덩어리 경계만 두 블러의 폭 차이만큼 뚜렷한 차이로 남는다
-    const sigma1 = Math.max(1, denoiseRadius);
-    const sigma2 = sigma1 * 2;
-    const grayFine = boxBlur(rawGray, width, height, sigma1);
-    const grayCoarse = boxBlur(grayFine, width, height, sigma2 - sigma1);
-    let gray = grayFine; // 음영 등 이후 단계에서 쓸 "기본 명암"
+    // 1) 단순화: 반경이 클수록 잔 디테일이 사라져 아이들용 단순한 그림이 된다.
+    //    박스 블러 2회는 가우시안 블러의 값싼 근사.
+    const radius = Math.max(1, parseInt(denoise.value, 10));
+    const smooth = boxBlur(boxBlur(gray, width, height, radius), width, height, radius);
 
-    const magnitude = new Float32Array(width * height);
-    for (let i = 0; i < magnitude.length; i++) {
-      magnitude[i] = Math.abs(grayFine[i] - grayCoarse[i]);
-    }
+    // 2) 블러 반경만큼 떨어진 픽셀끼리 비교한다. 블러가 경계를 폭 ~2*radius의 완만한
+    //    경사로 펴놓기 때문에, 이웃 1픽셀만 보는 고정 3x3 커널로는 그 경사를 못 잡는다.
+    const { mag, dir } = gradient(smooth, width, height, radius);
 
-    const sensitivityPct = parseInt(sensitivity.value, 10); // 0~100, 높을수록 선 많음
-    const thresholdValue = 12 * (1 - sensitivityPct / 100) + 2; // DoG 응답 스케일에 맞춘 값
-    let mask = thresholdMask(magnitude, thresholdValue);
-    // 박스 블러는 이미지 바깥을 가장자리 픽셀 복제로 채우는데, sigma1/sigma2가 서로 다른
-    // 만큼 그 복제 방식이 어긋나면서 실제 경계가 없어도 테두리를 따라 가짜 선이 생긴다.
-    // sigma2 폭만큼 테두리를 판단에서 제외해 액자 효과를 없앤다.
-    suppressBorder(mask, width, height, sigma2);
+    // 3) 경사면 전체가 아니라 능선(정점)만 남긴다 — 굵은 띠가 아니라 한 줄 선이 되도록.
+    const ridge = nonMaxSuppress(mag, dir, width, height, radius);
 
+    // 4) 임계값을 절대값으로 고정하면 사진마다 결과가 들쭉날쭉하다.
+    //    이 사진 자신의 분포에서 "전체 픽셀의 상위 몇 %를 선의 씨앗으로 쓸지"로 정해 일관성을 준다.
+    //    컬러링북은 검은 면적이 대략 2~5%일 때 보기 좋아서, 씨앗은 그보다 훨씬 적게 잡는다
+    //    (아래 히스테리시스가 씨앗에서 선을 이어붙이며 몇 배로 늘리기 때문).
+    const sensitivityPct = parseInt(sensitivity.value, 10);
+    const seedPct = 0.05 + sensitivityPct / 100 * 1.0; // 전체 픽셀의 0.05% ~ 1.05%
+    const high = percentile(ridge, seedPct);
+    const low = high * 0.5;
+    // 강한 선에서 출발해 이어지는 약한 선만 살린다 → 흩어진 점이 아니라 이어진 윤곽선.
+    let mask = hysteresis(ridge, width, height, low, high);
+
+    // 블러는 이미지 바깥을 가장자리 픽셀 복제로 채우므로 테두리에 가짜 선이 생긴다.
+    suppressBorder(mask, width, height, radius * 2);
+
+    // 5) 남은 점각 제거 — 단순화를 올릴수록 더 큰 덩어리만 남긴다.
+    removeSpecks(mask, width, height, 4 + radius * 8);
+
+    // 6) 굵기
     const thicknessRadius = parseInt(thickness.value, 10);
     if (thicknessRadius > 0) {
       mask = dilate(mask, width, height, thicknessRadius);
     }
 
-    // 음영: 켜져 있으면 어두운 영역(블러된 명암 기준, 평균보다 확 어두운 곳)에
-    // 옅은 회색 플랫톤만 깔아준다. 노이즈성 해칭이 아니라 면 단위 채우기.
+    // 음영(옵션): 어두운 영역에 연한 회색 플랫톤만 깐다. 해칭 노이즈가 아니라 면 단위 채우기.
     let shadeMask = null;
     if (shading.checked) {
       let sum = 0;
-      for (let i = 0; i < gray.length; i++) sum += gray[i];
-      const mean = sum / gray.length;
-      const shadeThreshold = mean * 0.65;
-      shadeMask = new Uint8Array(gray.length);
-      for (let i = 0; i < gray.length; i++) {
-        shadeMask[i] = gray[i] < shadeThreshold ? 1 : 0;
+      for (let i = 0; i < smooth.length; i++) sum += smooth[i];
+      const shadeThreshold = (sum / smooth.length) * 0.65;
+      shadeMask = new Uint8Array(smooth.length);
+      for (let i = 0; i < smooth.length; i++) {
+        shadeMask[i] = smooth[i] < shadeThreshold ? 1 : 0;
       }
     }
 
@@ -197,7 +209,7 @@
     for (let i = 0; i < mask.length; i++) {
       let v;
       if (mask[i]) {
-        v = 0; // 엣지 = 검정
+        v = 0; // 윤곽선 = 검정
       } else if (shadeMask && shadeMask[i]) {
         v = SHADE_TONE; // 음영 = 연한 회색
       } else {
@@ -211,8 +223,7 @@
     }
     octx.putImageData(outData, 0, 0);
 
-    const rctx = resultCanvas.getContext('2d');
-    rctx.drawImage(out, 0, 0);
+    resultCanvas.getContext('2d').drawImage(out, 0, 0);
   }
 
   function toGrayscale(imageData) {
@@ -264,24 +275,154 @@
     return v < lo ? lo : v > hi ? hi : v;
   }
 
-  function suppressBorder(magnitude, width, height, margin) {
+  // 밝기 변화의 세기와 방향. step은 블러 반경에 맞춘다.
+  // dir: 0=가로변화(│선) 1=대각(/) 2=세로변화(─선) 3=대각(\)
+  function gradient(gray, width, height, step) {
+    const mag = new Float32Array(width * height);
+    const dir = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      const rowT = clamp(y - step, 0, height - 1) * width;
+      const rowB = clamp(y + step, 0, height - 1) * width;
+      for (let x = 0; x < width; x++) {
+        const gx = gray[row + clamp(x + step, 0, width - 1)] - gray[row + clamp(x - step, 0, width - 1)];
+        const gy = gray[rowB + x] - gray[rowT + x];
+        mag[row + x] = Math.sqrt(gx * gx + gy * gy);
+        // 0~180도로 접어 4방향으로 양자화
+        const angle = ((Math.atan2(gy, gx) * 180 / Math.PI) % 180 + 180) % 180;
+        dir[row + x] = (angle < 22.5 || angle >= 157.5) ? 0 : angle < 67.5 ? 1 : angle < 112.5 ? 2 : 3;
+      }
+    }
+    return { mag, dir };
+  }
+
+  // 그래디언트 방향으로 ±step 떨어진 두 이웃보다 크지 않으면 버린다 → 능선 한 줄만 남음.
+  function nonMaxSuppress(mag, dir, width, height, step) {
+    const out = new Float32Array(mag.length);
+    const offX = [step, step, 0, step];
+    const offY = [0, step, step, -step];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const v = mag[i];
+        if (v === 0) continue;
+        const d = dir[i];
+        const ax = offX[d];
+        const ay = offY[d];
+        const a = clamp(y + ay, 0, height - 1) * width + clamp(x + ax, 0, width - 1);
+        const b = clamp(y - ay, 0, height - 1) * width + clamp(x - ax, 0, width - 1);
+        if (v >= mag[a] && v >= mag[b]) out[i] = v;
+      }
+    }
+    return out;
+  }
+
+  // 전체 픽셀 중 상위 keepPct% 지점의 값을 구한다(히스토그램 근사).
+  function percentile(values, keepPct) {
+    const BINS = 512;
+    let max = 0;
+    for (let i = 0; i < values.length; i++) if (values[i] > max) max = values[i];
+    if (max <= 0) return Infinity;
+
+    const scale = (BINS - 1) / max;
+    const hist = new Int32Array(BINS);
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v > 0) hist[(v * scale) | 0]++;
+    }
+
+    const keep = Math.max(1, Math.round(values.length * keepPct / 100));
+    let acc = 0;
+    for (let b = BINS - 1; b >= 0; b--) {
+      acc += hist[b];
+      if (acc >= keep) return b / scale;
+    }
+    return 0;
+  }
+
+  // high 이상인 픽셀을 씨앗으로 삼아, 8방향으로 이어지는 low 이상 픽셀까지 따라가며 선을 잇는다.
+  // 강한 선에 닿지 못한 약한 응답(=흩어진 점각)은 자동으로 탈락한다.
+  function hysteresis(mag, width, height, low, high) {
+    const mask = new Uint8Array(mag.length);
+    const stack = new Int32Array(mag.length);
+    let top = 0;
+
+    for (let i = 0; i < mag.length; i++) {
+      if (mag[i] >= high) {
+        mask[i] = 1;
+        stack[top++] = i;
+      }
+    }
+
+    while (top > 0) {
+      const i = stack[--top];
+      const x = i % width;
+      const y = (i / width) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const j = ny * width + nx;
+          if (!mask[j] && mag[j] >= low) {
+            mask[j] = 1;
+            stack[top++] = j;
+          }
+        }
+      }
+    }
+    return mask;
+  }
+
+  // minSize보다 작은 덩어리(연결 성분)를 지운다.
+  function removeSpecks(mask, width, height, minSize) {
+    if (minSize <= 1) return;
+    const seen = new Uint8Array(mask.length);
+    const stack = new Int32Array(mask.length);
+    const comp = new Int32Array(mask.length);
+
+    for (let s = 0; s < mask.length; s++) {
+      if (!mask[s] || seen[s]) continue;
+      let top = 0;
+      let n = 0;
+      stack[top++] = s;
+      seen[s] = 1;
+      while (top > 0) {
+        const i = stack[--top];
+        comp[n++] = i;
+        const x = i % width;
+        const y = (i / width) | 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= height) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= width) continue;
+            const j = ny * width + nx;
+            if (mask[j] && !seen[j]) {
+              seen[j] = 1;
+              stack[top++] = j;
+            }
+          }
+        }
+      }
+      if (n < minSize) {
+        for (let k = 0; k < n; k++) mask[comp[k]] = 0;
+      }
+    }
+  }
+
+  function suppressBorder(mask, width, height, margin) {
     const m = Math.min(margin, Math.floor(Math.min(width, height) / 2));
     if (m <= 0) return;
     for (let y = 0; y < height; y++) {
       const inBand = y < m || y >= height - m;
       const row = y * width;
       for (let x = 0; x < width; x++) {
-        if (inBand || x < m || x >= width - m) magnitude[row + x] = 0;
+        if (inBand || x < m || x >= width - m) mask[row + x] = 0;
       }
     }
-  }
-
-  function thresholdMask(magnitude, thresholdValue) {
-    const mask = new Uint8Array(magnitude.length);
-    for (let i = 0; i < magnitude.length; i++) {
-      mask[i] = magnitude[i] > thresholdValue ? 1 : 0;
-    }
-    return mask;
   }
 
   // 정사각 커널 최대값 필터 (선 굵기 확장)

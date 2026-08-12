@@ -29,6 +29,11 @@
 
 * { box-sizing: border-box; }
 
+/* .controls/.preview-grid/.processing-overlay 처럼 클래스에서 display를 지정하면
+   브라우저 기본 [hidden]{display:none} 을 이겨버려 hidden 속성이 무시된다.
+   (이 때문에 "변환 중" 오버레이가 안 사라졌음) 명시적으로 이기게 둔다. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Malgun Gothic", sans-serif;

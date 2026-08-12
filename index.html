@@ -34,19 +34,19 @@
 
       <section class="controls" id="controls" hidden>
         <div class="control-row">
-          <label for="sensitivity">선 민감도 <span class="value" id="sensitivityVal">50</span></label>
+          <label for="denoise">단순화 정도 <span class="value" id="denoiseVal">6</span></label>
+          <input type="range" id="denoise" min="1" max="30" value="6">
+          <p class="hint">낮추면 정교한 어른용 컬러링북, 높이면 아이들용 단순한 그림</p>
+        </div>
+        <div class="control-row">
+          <label for="sensitivity">선 개수 <span class="value" id="sensitivityVal">50</span></label>
           <input type="range" id="sensitivity" min="0" max="100" value="50">
-          <p class="hint">높일수록 세밀한 선까지 더 많이 잡아요</p>
+          <p class="hint">높일수록 선을 더 많이 남겨요</p>
         </div>
         <div class="control-row">
           <label for="thickness">선 굵기 <span class="value" id="thicknessVal">1</span></label>
           <input type="range" id="thickness" min="0" max="3" value="1">
           <p class="hint">숫자가 클수록 선이 굵어져요</p>
-        </div>
-        <div class="control-row">
-          <label for="denoise">잡티 제거 <span class="value" id="denoiseVal">6</span></label>
-          <input type="range" id="denoise" min="0" max="30" value="6">
-          <p class="hint">복잡하고 디테일 많은 사진일수록 크게 올리세요</p>
         </div>
 
         <div class="control-row control-row-checkbox">
