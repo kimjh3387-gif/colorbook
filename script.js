@@ -114,9 +114,17 @@
     // requestAnimationFrame에 의존하면 탭이 백그라운드/비표시 상태일 때 콜백이 멈춘다.
     // setTimeout만 사용해 화면 표시 여부와 무관하게 실행되도록 한다.
     setTimeout(() => {
-      render();
-      renderQueued = false;
-      processingOverlay.hidden = true;
+      try {
+        render();
+        processingOverlay.hidden = true;
+      } catch (err) {
+        // 에러가 나도 "변환 중"에 무한히 멈춰있지 않고 사용자에게 보여준다.
+        console.error('색칠공부 변환 실패:', err);
+        processingOverlay.hidden = false;
+        processingOverlay.textContent = '변환 중 오류가 났어요: ' + err.message;
+      } finally {
+        renderQueued = false;
+      }
     }, 0);
   }
 
