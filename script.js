@@ -17,12 +17,20 @@
   const sensitivity = document.getElementById('sensitivity');
   const thickness = document.getElementById('thickness');
   const denoise = document.getElementById('denoise');
+  const adaptive = document.getElementById('adaptive');
   const shading = document.getElementById('shading');
   const sensitivityVal = document.getElementById('sensitivityVal');
   const thicknessVal = document.getElementById('thicknessVal');
   const denoiseVal = document.getElementById('denoiseVal');
+  const adaptiveVal = document.getElementById('adaptiveVal');
 
-  const DEFAULTS = { sensitivity: 50, thickness: 1, denoise: 6, shading: false };
+  const lightbox = document.getElementById('lightbox');
+  const lightboxImg = document.getElementById('lightboxImg');
+  const lightboxClose = document.getElementById('lightboxClose');
+
+  // denoise 기본값 3: 6이면 해·광배처럼 가늘고 대비 약한 요소가 흐림 단계에서 통째로 지워진다
+  // (측정: 단순화 2~4에서는 해가 잡히고 6에서는 0). 3이면 텍스처는 눌리면서 해는 살아남는다.
+  const DEFAULTS = { sensitivity: 50, thickness: 1, denoise: 3, adaptive: 60, shading: false };
 
   let sourceImage = null; // HTMLImageElement
   let renderQueued = false;
@@ -77,6 +85,7 @@
     [sensitivity, sensitivityVal],
     [thickness, thicknessVal],
     [denoise, denoiseVal],
+    [adaptive, adaptiveVal],
   ].forEach(([input, out]) => {
     input.addEventListener('input', () => {
       out.textContent = input.value;
@@ -90,11 +99,36 @@
     sensitivity.value = DEFAULTS.sensitivity;
     thickness.value = DEFAULTS.thickness;
     denoise.value = DEFAULTS.denoise;
+    adaptive.value = DEFAULTS.adaptive;
     shading.checked = DEFAULTS.shading;
     sensitivityVal.textContent = DEFAULTS.sensitivity;
     thicknessVal.textContent = DEFAULTS.thickness;
     denoiseVal.textContent = DEFAULTS.denoise;
+    adaptiveVal.textContent = DEFAULTS.adaptive;
     scheduleRender();
+  });
+
+  // ---------- 크게 보기(돋보기) ----------
+  document.querySelectorAll('.zoom-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const canvas = document.getElementById(btn.dataset.zoom);
+      if (!canvas || !canvas.width) return;
+      lightboxImg.src = canvas.toDataURL('image/png');
+      lightbox.hidden = false;
+    });
+  });
+
+  function closeLightbox() {
+    lightbox.hidden = true;
+    lightboxImg.removeAttribute('src'); // 큰 data URL을 붙들고 있지 않도록
+  }
+
+  lightboxClose.addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', (e) => {
+    if (e.target === lightbox) closeLightbox(); // 배경 클릭
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !lightbox.hidden) closeLightbox();
   });
 
   downloadBtn.addEventListener('click', () => {
@@ -153,38 +187,44 @@
     const gray = toGrayscale(imageData);
 
     // 1) 단순화: 반경이 클수록 잔 디테일이 사라져 아이들용 단순한 그림이 된다.
-    //    박스 블러 2회는 가우시안 블러의 값싼 근사.
-    const radius = Math.max(1, parseInt(denoise.value, 10));
-    const smooth = boxBlur(boxBlur(gray, width, height, radius), width, height, radius);
+    //    박스 블러 2회는 가우시안 블러의 값싼 근사. 반경은 0.5 단위(소수)까지 받는다.
+    const radius = Math.max(0.5, parseFloat(denoise.value));
+    const smooth = blurFractional(blurFractional(gray, width, height, radius), width, height, radius);
 
     // 2) 블러 반경만큼 떨어진 픽셀끼리 비교한다. 블러가 경계를 폭 ~2*radius의 완만한
     //    경사로 펴놓기 때문에, 이웃 1픽셀만 보는 고정 3x3 커널로는 그 경사를 못 잡는다.
-    const { mag, dir } = gradient(smooth, width, height, radius);
+    const step = Math.max(1, Math.round(radius));
+    const { mag, dir } = gradient(smooth, width, height, step);
 
     // 3) 경사면 전체가 아니라 능선(정점)만 남긴다 — 굵은 띠가 아니라 한 줄 선이 되도록.
-    const ridge = nonMaxSuppress(mag, dir, width, height, radius);
+    const ridge = nonMaxSuppress(mag, dir, width, height, step);
 
-    // 4) 임계값을 절대값으로 고정하면 사진마다 결과가 들쭉날쭉하다.
+    // 4) 영역별 적응: 사진 전체에 기준 하나만 쓰면, 대비가 극단적으로 센 부분(검은 용 vs 금색 배경)이
+    //    상위권을 독식해서 대비가 약한 부분(밝은 것 위의 밝은 것 = 해·광배)이 통째로 잘려나간다.
+    //    그래서 픽셀마다 "자기 주변 동네의 평균 대비"로 나눠 상대적 세기로 바꾼다.
+    //    격자로 자르면 칸 경계에서 선이 끊기므로, 창이 미끄러지는 방식(박스 블러)을 쓴다.
+    const score = adaptiveScore(ridge, mag, width, height, parseFloat(adaptive.value) / 100);
+
+    // 5) 임계값을 절대값으로 고정하면 사진마다 결과가 들쭉날쭉하다.
     //    이 사진 자신의 분포에서 "전체 픽셀의 상위 몇 %를 선의 씨앗으로 쓸지"로 정해 일관성을 준다.
-    //    컬러링북은 검은 면적이 대략 2~5%일 때 보기 좋아서, 씨앗은 그보다 훨씬 적게 잡는다
-    //    (아래 히스테리시스가 씨앗에서 선을 이어붙이며 몇 배로 늘리기 때문).
-    const sensitivityPct = parseInt(sensitivity.value, 10);
-    const seedPct = 0.05 + sensitivityPct / 100 * 1.0; // 전체 픽셀의 0.05% ~ 1.05%
-    const high = percentile(ridge, seedPct);
+    //    지수 곡선이라 낮은 쪽(정교한 조절이 필요한 구간)이 촘촘하다.
+    const sensitivityPct = parseFloat(sensitivity.value);
+    const seedPct = 0.05 * Math.pow(100, sensitivityPct / 100); // 0.05% ~ 5%
+    const high = percentile(score, seedPct);
     const low = high * 0.5;
     // 강한 선에서 출발해 이어지는 약한 선만 살린다 → 흩어진 점이 아니라 이어진 윤곽선.
-    let mask = hysteresis(ridge, width, height, low, high);
+    let mask = hysteresis(score, width, height, low, high);
 
     // 블러는 이미지 바깥을 가장자리 픽셀 복제로 채우므로 테두리에 가짜 선이 생긴다.
-    suppressBorder(mask, width, height, radius * 2);
+    suppressBorder(mask, width, height, Math.ceil(radius) * 2);
 
-    // 5) 남은 점각 제거 — 단순화를 올릴수록 더 큰 덩어리만 남긴다.
+    // 6) 남은 점각 제거 — 단순화를 올릴수록 더 큰 덩어리만 남긴다.
     removeSpecks(mask, width, height, 4 + radius * 8);
 
-    // 6) 굵기
-    const thicknessRadius = parseInt(thickness.value, 10);
+    // 7) 굵기
+    const thicknessRadius = parseFloat(thickness.value);
     if (thicknessRadius > 0) {
-      mask = dilate(mask, width, height, thicknessRadius);
+      mask = dilateDisc(mask, width, height, thicknessRadius);
     }
 
     // 음영(옵션): 어두운 영역에 연한 회색 플랫톤만 깐다. 해칭 노이즈가 아니라 면 단위 채우기.
@@ -269,6 +309,44 @@
       }
     }
     return out;
+  }
+
+  // 소수 반경 블러: 정수 반경 두 개를 섞어 0.5 같은 중간값을 만든다.
+  // (박스 블러는 정수 반경만 되는데, 단순화 슬라이더를 촘촘하게 쓰려면 중간값이 필요하다)
+  function blurFractional(src, width, height, radius) {
+    const lo = Math.floor(radius);
+    const frac = radius - lo;
+    const a = boxBlur(src, width, height, lo);
+    if (frac === 0) return a;
+    const b = boxBlur(src, width, height, lo + 1);
+    for (let i = 0; i < a.length; i++) a[i] += (b[i] - a[i]) * frac;
+    return a;
+  }
+
+  // 픽셀마다 "자기 주변 동네의 평균 대비"로 나눠 상대적 세기로 바꾼다.
+  // strength=0 이면 사진 전체 평균만 쓰므로 적응 전과 완전히 동일한 결과가 나온다(안전한 원위치).
+  function adaptiveScore(ridge, mag, width, height, strength) {
+    let sum = 0;
+    for (let i = 0; i < mag.length; i++) sum += mag[i];
+    const globalMean = sum / mag.length || 1;
+
+    // 전체 픽셀 수에 비례하는 크기의 창. 무시하고 싶은 텍스처보다는 크고,
+    // 적응하고 싶은 밝기 변화(해 주변 vs 어두운 바위)보다는 작아야 한다.
+    const window = Math.max(8, Math.round(Math.min(width, height) / 8));
+    const localMean = boxBlur(mag, width, height, window);
+
+    // 안전장치(하한선): 아무것도 없는 평평한 하늘에서 동네 평균이 0에 가까워지면
+    // 미세한 노이즈가 "이 동네 1등"이 되어 없는 선이 생긴다. 그래서 바닥을 깔아둔다.
+    const floor = globalMean * 0.35;
+
+    const score = new Float32Array(ridge.length);
+    for (let i = 0; i < ridge.length; i++) {
+      if (ridge[i] === 0) continue;
+      const local = localMean[i] > floor ? localMean[i] : floor;
+      const denom = globalMean + (local - globalMean) * strength;
+      score[i] = ridge[i] / denom;
+    }
+    return score;
   }
 
   function clamp(v, lo, hi) {
@@ -425,20 +503,30 @@
     }
   }
 
-  // 정사각 커널 최대값 필터 (선 굵기 확장)
-  function dilate(mask, width, height, radius) {
+  // 원형 커널 최대값 필터 (선 굵기 확장).
+  // 정사각 커널은 선이 각지게 굵어지고 크기가 껑충 뛰어서(9→25→49px) 중간 굵기가 없다.
+  // 원형은 면적이 완만하게 늘어 0.5 단위 조절이 실제로 눈에 보인다.
+  function dilateDisc(mask, width, height, radius) {
+    const r = Math.ceil(radius);
+    const rSq = radius * radius;
+    const offX = [];
+    const offY = [];
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy <= rSq) { offX.push(dx); offY.push(dy); }
+      }
+    }
+
     const out = new Uint8Array(mask.length);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        let hit = 0;
-        for (let ky = -radius; ky <= radius && !hit; ky++) {
-          const yy = clamp(y + ky, 0, height - 1);
-          for (let kx = -radius; kx <= radius; kx++) {
-            const xx = clamp(x + kx, 0, width - 1);
-            if (mask[yy * width + xx]) { hit = 1; break; }
-          }
-        }
-        out[y * width + x] = hit;
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      const x = i % width;
+      const y = (i / width) | 0;
+      for (let k = 0; k < offX.length; k++) {
+        const nx = x + offX[k];
+        const ny = y + offY[k];
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        out[ny * width + nx] = 1;
       }
     }
     return out;

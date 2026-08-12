@@ -34,19 +34,24 @@
 
       <section class="controls" id="controls" hidden>
         <div class="control-row">
-          <label for="denoise">단순화 정도 <span class="value" id="denoiseVal">6</span></label>
-          <input type="range" id="denoise" min="1" max="30" value="6">
+          <label for="denoise">단순화 정도 <span class="value" id="denoiseVal">3</span></label>
+          <input type="range" id="denoise" min="0.5" max="30" step="0.5" value="3">
           <p class="hint">낮추면 정교한 어른용 컬러링북, 높이면 아이들용 단순한 그림</p>
         </div>
         <div class="control-row">
           <label for="sensitivity">선 개수 <span class="value" id="sensitivityVal">50</span></label>
-          <input type="range" id="sensitivity" min="0" max="100" value="50">
+          <input type="range" id="sensitivity" min="0" max="100" step="0.5" value="50">
           <p class="hint">높일수록 선을 더 많이 남겨요</p>
         </div>
         <div class="control-row">
           <label for="thickness">선 굵기 <span class="value" id="thicknessVal">1</span></label>
-          <input type="range" id="thickness" min="0" max="3" value="1">
+          <input type="range" id="thickness" min="0" max="5" step="0.5" value="1">
           <p class="hint">숫자가 클수록 선이 굵어져요</p>
+        </div>
+        <div class="control-row">
+          <label for="adaptive">영역별 적응 <span class="value" id="adaptiveVal">60</span></label>
+          <input type="range" id="adaptive" min="0" max="100" step="5" value="60">
+          <p class="hint">0이면 사진 전체 하나의 기준. 올리면 밝은 구역·어두운 구역을 따로 판단해서 해·하늘처럼 대비 약한 것도 잡아요</p>
         </div>
 
         <div class="control-row control-row-checkbox">
@@ -71,13 +76,19 @@
 
       <div class="preview-grid" id="previewGrid" hidden>
         <div class="preview-card">
-          <h2>원본</h2>
+          <div class="card-head">
+            <button class="zoom-btn" type="button" data-zoom="originalCanvas" title="크게 보기" aria-label="원본 크게 보기">🔍</button>
+            <h2>원본</h2>
+          </div>
           <div class="canvas-wrap">
             <canvas id="originalCanvas"></canvas>
           </div>
         </div>
         <div class="preview-card">
-          <h2>색칠공부 버전</h2>
+          <div class="card-head">
+            <button class="zoom-btn" type="button" data-zoom="resultCanvas" title="크게 보기" aria-label="색칠공부 버전 크게 보기">🔍</button>
+            <h2>색칠공부 버전</h2>
+          </div>
           <div class="canvas-wrap checker">
             <canvas id="resultCanvas"></canvas>
             <div class="processing-overlay" id="processingOverlay" hidden>변환 중…</div>
@@ -91,6 +102,13 @@
     <p>모든 변환은 이 브라우저 안에서만 일어나요. 새로고침하면 결과는 사라지니 필요하면 먼저 다운로드하세요.</p>
   </footer>
 </div>
+
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightboxClose" type="button" aria-label="닫기">✕</button>
+  <img class="lightbox-img" id="lightboxImg" alt="크게 보기">
+  <p class="lightbox-hint">배경을 클릭하거나 ESC를 누르면 닫혀요</p>
+</div>
+
 <script src="script.js"></script>
 </body>
 </html>
