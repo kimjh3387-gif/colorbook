@@ -107,13 +107,13 @@
     if (renderQueued) return;
     renderQueued = true;
     processingOverlay.hidden = false;
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        render();
-        renderQueued = false;
-        processingOverlay.hidden = true;
-      }, 0);
-    });
+    // requestAnimationFrame에 의존하면 탭이 백그라운드/비표시 상태일 때 콜백이 멈춘다.
+    // setTimeout만 사용해 화면 표시 여부와 무관하게 실행되도록 한다.
+    setTimeout(() => {
+      render();
+      renderQueued = false;
+      processingOverlay.hidden = true;
+    }, 0);
   }
 
   // ---------- 이미지 처리 파이프라인 ----------
