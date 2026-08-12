@@ -44,9 +44,17 @@
           <p class="hint">숫자가 클수록 선이 굵어져요</p>
         </div>
         <div class="control-row">
-          <label for="denoise">잡티 제거 <span class="value" id="denoiseVal">1</span></label>
-          <input type="range" id="denoise" min="0" max="3" value="1">
-          <p class="hint">사진 노이즈로 생기는 자잘한 선을 줄여요</p>
+          <label for="denoise">잡티 제거 <span class="value" id="denoiseVal">6</span></label>
+          <input type="range" id="denoise" min="0" max="30" value="6">
+          <p class="hint">복잡하고 디테일 많은 사진일수록 크게 올리세요</p>
+        </div>
+
+        <div class="control-row control-row-checkbox">
+          <label class="checkbox-label" for="shading">
+            <input type="checkbox" id="shading">
+            음영(그림자) 추가
+          </label>
+          <p class="hint">끄면 선만, 켜면 어두운 부분에 연한 회색 톤을 깔아요</p>
         </div>
 
         <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>

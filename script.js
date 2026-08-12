@@ -18,11 +18,12 @@
   const sensitivity = document.getElementById('sensitivity');
   const thickness = document.getElementById('thickness');
   const denoise = document.getElementById('denoise');
+  const shading = document.getElementById('shading');
   const sensitivityVal = document.getElementById('sensitivityVal');
   const thicknessVal = document.getElementById('thicknessVal');
   const denoiseVal = document.getElementById('denoiseVal');
 
-  const DEFAULTS = { sensitivity: 50, thickness: 1, denoise: 1 };
+  const DEFAULTS = { sensitivity: 50, thickness: 1, denoise: 6, shading: false };
 
   let sourceImage = null; // HTMLImageElement
   let renderQueued = false;
@@ -84,10 +85,13 @@
     });
   });
 
+  shading.addEventListener('change', scheduleRender);
+
   resetBtn.addEventListener('click', () => {
     sensitivity.value = DEFAULTS.sensitivity;
     thickness.value = DEFAULTS.thickness;
     denoise.value = DEFAULTS.denoise;
+    shading.checked = DEFAULTS.shading;
     sensitivityVal.textContent = DEFAULTS.sensitivity;
     thicknessVal.textContent = DEFAULTS.thickness;
     denoiseVal.textContent = DEFAULTS.denoise;
@@ -129,23 +133,53 @@
     sctx.drawImage(sourceImage, 0, 0, width, height);
     const imageData = sctx.getImageData(0, 0, width, height);
 
-    let gray = toGrayscale(imageData);
+    const rawGray = toGrayscale(imageData);
 
     const denoiseRadius = parseInt(denoise.value, 10);
-    if (denoiseRadius > 0) {
-      gray = boxBlur(gray, width, height, denoiseRadius);
+    // sigma1(약한 블러)은 denoise 슬라이더 그대로, sigma2(강한 블러)는 항상 그 2배.
+    // 두 블러의 "차이(Difference of Gaussians)"를 윤곽선으로 쓴다.
+    //  - 매끈한 그라데이션(하늘, 조명 등)은 어떤 블러를 먹여도 그대로라 차이가 0에 가까움
+    //  - 잔 텍스처는 sigma1 단계에서 이미 뭉개지므로 두 블러의 차이가 거의 없음
+    //  - 실제 큰 덩어리 경계만 두 블러의 폭 차이만큼 뚜렷한 차이로 남는다
+    const sigma1 = Math.max(1, denoiseRadius);
+    const sigma2 = sigma1 * 2;
+    const grayFine = boxBlur(rawGray, width, height, sigma1);
+    const grayCoarse = boxBlur(grayFine, width, height, sigma2 - sigma1);
+    let gray = grayFine; // 음영 등 이후 단계에서 쓸 "기본 명암"
+
+    const magnitude = new Float32Array(width * height);
+    for (let i = 0; i < magnitude.length; i++) {
+      magnitude[i] = Math.abs(grayFine[i] - grayCoarse[i]);
     }
 
-    const magnitude = sobelMagnitude(gray, width, height);
-
     const sensitivityPct = parseInt(sensitivity.value, 10); // 0~100, 높을수록 선 많음
-    const thresholdValue = 255 * (1 - sensitivityPct / 100) * 0.6; // 체감 곡선 보정
+    const thresholdValue = 12 * (1 - sensitivityPct / 100) + 2; // DoG 응답 스케일에 맞춘 값
     let mask = thresholdMask(magnitude, thresholdValue);
+    // 박스 블러는 이미지 바깥을 가장자리 픽셀 복제로 채우는데, sigma1/sigma2가 서로 다른
+    // 만큼 그 복제 방식이 어긋나면서 실제 경계가 없어도 테두리를 따라 가짜 선이 생긴다.
+    // sigma2 폭만큼 테두리를 판단에서 제외해 액자 효과를 없앤다.
+    suppressBorder(mask, width, height, sigma2);
 
     const thicknessRadius = parseInt(thickness.value, 10);
     if (thicknessRadius > 0) {
       mask = dilate(mask, width, height, thicknessRadius);
     }
+
+    // 음영: 켜져 있으면 어두운 영역(블러된 명암 기준, 평균보다 확 어두운 곳)에
+    // 옅은 회색 플랫톤만 깔아준다. 노이즈성 해칭이 아니라 면 단위 채우기.
+    let shadeMask = null;
+    if (shading.checked) {
+      let sum = 0;
+      for (let i = 0; i < gray.length; i++) sum += gray[i];
+      const mean = sum / gray.length;
+      const shadeThreshold = mean * 0.65;
+      shadeMask = new Uint8Array(gray.length);
+      for (let i = 0; i < gray.length; i++) {
+        shadeMask[i] = gray[i] < shadeThreshold ? 1 : 0;
+      }
+    }
+
+    const SHADE_TONE = 225;
 
     const out = document.createElement('canvas');
     out.width = width;
@@ -153,7 +187,14 @@
     const octx = out.getContext('2d');
     const outData = octx.createImageData(width, height);
     for (let i = 0; i < mask.length; i++) {
-      const v = mask[i] ? 0 : 255; // 엣지=검정, 배경=흰색
+      let v;
+      if (mask[i]) {
+        v = 0; // 엣지 = 검정
+      } else if (shadeMask && shadeMask[i]) {
+        v = SHADE_TONE; // 음영 = 연한 회색
+      } else {
+        v = 255; // 배경 = 흰색
+      }
       const o = i * 4;
       outData.data[o] = v;
       outData.data[o + 1] = v;
@@ -215,28 +256,16 @@
     return v < lo ? lo : v > hi ? hi : v;
   }
 
-  const SOBEL_X = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-  const SOBEL_Y = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-
-  function sobelMagnitude(gray, width, height) {
-    const mag = new Float32Array(width * height);
+  function suppressBorder(magnitude, width, height, margin) {
+    const m = Math.min(margin, Math.floor(Math.min(width, height) / 2));
+    if (m <= 0) return;
     for (let y = 0; y < height; y++) {
+      const inBand = y < m || y >= height - m;
+      const row = y * width;
       for (let x = 0; x < width; x++) {
-        let gx = 0, gy = 0, k = 0;
-        for (let ky = -1; ky <= 1; ky++) {
-          const yy = clamp(y + ky, 0, height - 1);
-          for (let kx = -1; kx <= 1; kx++) {
-            const xx = clamp(x + kx, 0, width - 1);
-            const v = gray[yy * width + xx];
-            gx += v * SOBEL_X[k];
-            gy += v * SOBEL_Y[k];
-            k++;
-          }
-        }
-        mag[y * width + x] = Math.sqrt(gx * gx + gy * gy);
+        if (inBand || x < m || x >= width - m) magnitude[row + x] = 0;
       }
     }
-    return mag;
   }
 
   function thresholdMask(magnitude, thresholdValue) {
