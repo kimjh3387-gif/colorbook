@@ -14,7 +14,13 @@
   // 실측(1024px): WebGPU 첫 실행 2.7초(셰이더 컴파일), 이후 0.25초. WASM 폴백은 ~1초.
   const AI_MODEL_URL = 'models/pidinet_tiny.onnx';
   const ORT_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js';
-  const AI_MAX_DIMENSION = 1024; // 추론 해상도. 1200으로 올리면 시간만 늘고 선 품질은 그대로
+  const AI_OUTPUT_DIMENSION = 1024; // 결과 PNG 긴 변 (추론 해상도와 무관하게 고정)
+  // 추론 해상도 = AI 모드의 "단순화". 모델에 작은 그림을 주면 작은 주름은 안 보이고 큰 윤곽만 잡는다.
+  // 실측: 인형 사진은 1024에서 봉제선·털 주름을 전부 선으로 잡았고 512~768에서 얼굴은 그대로 두고
+  // 몸통 잔선만 빠졌다. 렌더 피카츄는 768이 1024보다 팔 위쪽이 더 잘 이어졌다(1024는 점선).
+  // 단순화 0.5→1024, 3(기본)→768, 6.5→512, 12.5→256: 6단계마다 절반.
+  const AI_MAX_DIMENSION = 1024;
+  const AI_MIN_DIMENSION = 256;
   const AI_MEAN = [0.485, 0.456, 0.406]; // ImageNet 정규화 (모델 학습 조건)
   const AI_STD = [0.229, 0.224, 0.225];
 
@@ -37,6 +43,8 @@
   const denoise = document.getElementById('denoise');
   const adaptive = document.getElementById('adaptive');
   const shading = document.getElementById('shading');
+  const prune = document.getElementById('prune');
+  const pruneVal = document.getElementById('pruneVal');
   const modeInputs = document.querySelectorAll('input[name="mode"]');
   const sensitivityVal = document.getElementById('sensitivityVal');
   const thicknessVal = document.getElementById('thicknessVal');
@@ -52,7 +60,7 @@
   // sensitivity 기본값 70: 컬러 그래디언트로 바꾼 뒤 흰 배경 실루엣이 워낙 세게 잡혀서 상위 n%를
   // 독식한다. 50이면 실루엣만 남고 눈·볼·입이 빠지고, 65면 입이 빠지고, 70에서 얼굴이 다 들어온다
   // (피카츄 썸네일 실측). 75부터는 JPEG 링잉이 손·발 근처에 꼬불선으로 나타나기 시작한다.
-  const DEFAULTS = { sensitivity: 70, thickness: 1, denoise: 3, adaptive: 60, shading: false };
+  const DEFAULTS = { sensitivity: 70, thickness: 1, denoise: 3, adaptive: 60, shading: false, prune: 40 };
 
   let sourceImage = null; // HTMLImageElement
   let rendering = false;      // 렌더가 진행 중 (AI 모드는 GPU를 기다리는 동안 입력 이벤트가 계속 들어온다)
@@ -120,6 +128,7 @@
     [thickness, thicknessVal],
     [denoise, denoiseVal],
     [adaptive, adaptiveVal],
+    [prune, pruneVal],
   ].forEach(([input, out]) => {
     input.addEventListener('input', () => {
       out.textContent = input.value;
@@ -141,6 +150,8 @@
     thickness.value = DEFAULTS.thickness;
     denoise.value = DEFAULTS.denoise;
     adaptive.value = DEFAULTS.adaptive;
+    prune.value = DEFAULTS.prune;
+    pruneVal.textContent = DEFAULTS.prune;
     shading.checked = DEFAULTS.shading;
     sensitivityVal.textContent = DEFAULTS.sensitivity;
     thicknessVal.textContent = DEFAULTS.thickness;
@@ -238,23 +249,56 @@
     return aiSessionPromise;
   }
 
-  // 추론 해상도: 긴 변 AI_MAX_DIMENSION, 각 변은 8의 배수 (모델이 /8 다운샘플 후 다시 키우므로 안전하게)
-  function fitSizeAI(w, h) {
-    const scale = AI_MAX_DIMENSION / Math.max(w, h);
+  function aiInferenceDimension() {
+    const d = parseFloat(denoise.value);
+    const dim = AI_MAX_DIMENSION * Math.pow(0.5, (d - 0.5) / 6);
+    return clamp(Math.round(dim / 8) * 8, AI_MIN_DIMENSION, AI_MAX_DIMENSION);
+  }
+
+  // 긴 변을 longest에 맞추고 각 변은 8의 배수로 (모델이 /8 다운샘플 후 다시 키우므로 안전하게)
+  function fitSizeAI(w, h, longest) {
+    const scale = longest / Math.max(w, h);
     const r = (v) => Math.max(8, Math.round(v * scale / 8) * 8);
     return { width: r(w), height: r(h) };
   }
 
-  // 모델 출력(픽셀별 "여기가 윤곽일 확률" 0~1)을 이미지당 한 번만 계산해 캐시한다.
+  // 추론 크기의 확률 맵을 출력 크기로 부드럽게 키운다 (캔버스 bilinear). 8비트로 한 번 거치지만
+  // 임계값 판정엔 충분하고, 작은 해상도로 돌린 결과도 결과 PNG는 항상 같은 크기가 된다.
+  function upscaleMap(src, sw, sh, dw, dh) {
+    if (sw === dw && sh === dh) return src;
+    const c = document.createElement('canvas');
+    c.width = sw;
+    c.height = sh;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(sw, sh);
+    for (let i = 0; i < src.length; i++) {
+      const v = Math.round(src[i] * 255);
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const big = document.createElement('canvas');
+    big.width = dw;
+    big.height = dh;
+    const bctx = big.getContext('2d', { willReadFrequently: true });
+    bctx.imageSmoothingQuality = 'high';
+    bctx.drawImage(c, 0, 0, dw, dh);
+    const d = bctx.getImageData(0, 0, dw, dh).data;
+    const out = new Float32Array(dw * dh);
+    for (let i = 0; i < out.length; i++) out[i] = d[i * 4] / 255;
+    return out;
+  }
+
+  // 모델 출력(픽셀별 "여기가 윤곽일 확률" 0~1)을 (이미지, 추론 해상도)당 한 번만 계산해 캐시한다.
   async function getFusedMap() {
-    if (aiCache && aiCache.image === sourceImage) return aiCache;
+    const inferDim = aiInferenceDimension();
+    if (aiCache && aiCache.image === sourceImage && aiCache.inferDim === inferDim) return aiCache;
     const image = sourceImage;
 
     if (!aiSessionPromise) processingOverlay.textContent = 'AI 모델 준비 중… (처음 한 번만)';
     const session = await getAISession();
     processingOverlay.textContent = 'AI가 윤곽을 찾는 중…';
 
-    const { width, height } = fitSizeAI(image.naturalWidth, image.naturalHeight);
+    const { width, height } = fitSizeAI(image.naturalWidth, image.naturalHeight, inferDim);
     const c = document.createElement('canvas');
     c.width = width;
     c.height = height;
@@ -271,9 +315,12 @@
       }
     }
     const out = await session.run({ image: new ort.Tensor('float32', x, [1, 3, height, width]) });
-    const fused = Float32Array.from(out.fused.data, (v) => (v < 0 ? 0 : v > 1 ? 1 : v));
+    const raw = Float32Array.from(out.fused.data, (v) => (v < 0 ? 0 : v > 1 ? 1 : v));
 
-    aiCache = { image, width, height, fused };
+    const outSize = fitSizeAI(image.naturalWidth, image.naturalHeight, AI_OUTPUT_DIMENSION);
+    const fused = upscaleMap(raw, width, height, outSize.width, outSize.height);
+
+    aiCache = { image, inferDim, width: outSize.width, height: outSize.height, fused };
     return aiCache;
   }
 
@@ -287,8 +334,10 @@
     const thr = clamp(0.85 - 0.7 * (s / 100), 0.08, 0.9); // 기본 70 → 0.36
 
     // 하드 임계값 하나면 확률이 오르내리는 약한 선(팔 위쪽 그림자 경계)이 점선으로 끊긴다.
-    // 강한 선(thr 이상)에서 출발해 이어지는 약한 선(thr의 35%까지)은 살린다 — 기본 모드와 같은 원리.
-    let mask = hysteresis(fused, width, height, thr * 0.35, thr);
+    // 강한 선(thr 이상)에서 출발해 이어지는 약한 선(thr의 55%까지)은 살린다 — 기본 모드와 같은 원리.
+    // 35%까지 내렸더니 인형 사진에서 털 주름이 줄줄이 딸려왔다. 추론 해상도를 768로 낮춘 뒤로는
+    // 팔이 하드 임계값으로도 이어지므로 하한을 넉넉히 둘 필요가 없다.
+    let mask = hysteresis(fused, width, height, thr * 0.55, thr);
 
     suppressBorder(mask, width, height, 8); // 모델이 이미지 가장자리(패딩 경계)에서 내는 가짜 선 제거
     removeSpecks(mask, width, height, 30);
@@ -296,6 +345,7 @@
     // 모델 선은 ~5px 굵기라 그대로 두면 슬라이더가 "더 굵게"밖에 못 한다. 1px 뼈대로 깎은 뒤
     // 슬라이더만큼 키워서 기본 모드와 같은 감각(0 = 가장 가는 선)으로 맞춘다.
     mask = thinZhangSuen(mask, width, height);
+    pruneSpurs(mask, width, height, parseFloat(prune.value));
     const thicknessRadius = parseFloat(thickness.value);
     if (thicknessRadius > 0) mask = dilateDisc(mask, width, height, thicknessRadius);
 
@@ -396,6 +446,7 @@
 
     // 6) 남은 점각 제거 — 단순화를 올릴수록 더 큰 덩어리만 남긴다.
     removeSpecks(mask, width, height, 4 + radius * 8);
+    pruneSpurs(mask, width, height, parseFloat(prune.value));
 
     // 7) 굵기
     const thicknessRadius = parseFloat(thickness.value);
@@ -722,6 +773,118 @@
   // 원형 커널 최대값 필터 (선 굵기 확장).
   // 정사각 커널은 선이 각지게 굵어지고 크기가 껑충 뛰어서(9→25→49px) 중간 굵기가 없다.
   // 원형은 면적이 완만하게 늘어 0.5 단위 조절이 실제로 눈에 보인다.
+  // 가지치기: 1px 선에서 "끝점 → 분기점(또는 다른 끝점)"까지 길이가 maxLen 이하인 가지를 지운다.
+  // 진짜 윤곽은 닫힌 고리라 끝점이 없고, 봉제선·털 주름·JPEG 노이즈는 끝이 뚫린 짧은 획이다.
+  // 입·눈썹처럼 열려 있지만 긴 획은 maxLen보다 길어 살아남는다 (1024px 기준 기본 30).
+  function pruneSpurs(mask, width, height, maxLen) {
+    const steps = Math.round(maxLen);
+    if (steps <= 0) return;
+    const n = width * height;
+    const countNeighbors = (m, i) => {
+      const x = i % width;
+      const y = (i / width) | 0;
+      let k = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          if (m[ny * width + nx]) k++;
+        }
+      }
+      return k;
+    };
+    const orig = mask.slice();
+
+    // 0) 고립된 열린 획(입·눈썹처럼 분기점이 하나도 없는 덩어리)은 "특징"으로 보고 보호한다.
+    //    가지치기는 윤곽에 매달린 가지(봉제선·주름)만 대상. 단, 아주 짧은 고립 획(12px 미만)은 노이즈로 지운다.
+    const protectedPx = new Uint8Array(n);
+    {
+      const label = new Int32Array(n); // 0 = 미방문
+      const stack = new Int32Array(n);
+      let compId = 0;
+      for (let seed = 0; seed < n; seed++) {
+        if (!mask[seed] || label[seed]) continue;
+        compId++;
+        let top = 0;
+        stack[top++] = seed;
+        label[seed] = compId;
+        const members = [];
+        let hasJunction = false;
+        while (top > 0) {
+          const i = stack[--top];
+          members.push(i);
+          const k = countNeighbors(mask, i);
+          if (k >= 3) hasJunction = true;
+          const x = i % width;
+          const y = (i / width) | 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (!dx && !dy) continue;
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+              const j = ny * width + nx;
+              if (mask[j] && !label[j]) { label[j] = compId; stack[top++] = j; }
+            }
+          }
+        }
+        if (!hasJunction) {
+          if (members.length < 12) for (const i of members) mask[i] = 0;
+          else for (const i of members) protectedPx[i] = 1;
+        }
+      }
+    }
+
+    // 1) 끝점(이웃 1개 이하)을 steps번 깎는다 → 길이 steps 이하인 가지는 통째로 사라지고,
+    //    긴 열린 획은 양끝이 steps만큼 짧아진다.
+    let frontier = [];
+    for (let i = 0; i < n; i++) if (mask[i] && !protectedPx[i] && countNeighbors(mask, i) <= 1) frontier.push(i);
+    for (let s = 0; s < steps && frontier.length; s++) {
+      const next = [];
+      for (let t = 0; t < frontier.length; t++) mask[frontier[t]] = 0;
+      for (let t = 0; t < frontier.length; t++) {
+        const i = frontier[t];
+        const x = i % width;
+        const y = (i / width) | 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            const j = ny * width + nx;
+            if (mask[j] && !protectedPx[j] && countNeighbors(mask, j) <= 1 && next.indexOf(j) < 0) next.push(j);
+          }
+        }
+      }
+      frontier = next;
+    }
+
+    // 2) 살아남은 끝점에서만 원래 선을 따라 steps번 되살린다 → 짧아졌던 긴 획은 복구되고,
+    //    분기점에 붙어 있다가 지워진 가지는 (분기점은 끝점이 아니므로) 되살아나지 않는다.
+    frontier = [];
+    for (let i = 0; i < n; i++) if (mask[i] && countNeighbors(mask, i) === 1) frontier.push(i);
+    for (let s = 0; s < steps && frontier.length; s++) {
+      const next = [];
+      for (let t = 0; t < frontier.length; t++) {
+        const i = frontier[t];
+        const x = i % width;
+        const y = (i / width) | 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            const j = ny * width + nx;
+            if (orig[j] && !mask[j]) { mask[j] = 1; next.push(j); }
+          }
+        }
+      }
+      frontier = next;
+    }
+  }
+
   // Zhang-Suen 세선화: 굵은 선을 가운데 1px 뼈대만 남기고 깎는다. 연결은 끊지 않는다.
   // 두 패스를 번갈아 돌리며 더 지울 픽셀이 없을 때까지 반복 (선 굵기 5px면 3번 안팎).
   function thinZhangSuen(mask, width, height) {
