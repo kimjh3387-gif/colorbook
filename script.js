@@ -52,6 +52,10 @@
 
   const lineTone = document.getElementById('lineTone');
   const lineToneVal = document.getElementById('lineToneVal');
+  const gapClose = document.getElementById('gapClose');
+  const gapCloseVal = document.getElementById('gapCloseVal');
+  const tinyFill = document.getElementById('tinyFill');
+  const tinyFillVal = document.getElementById('tinyFillVal');
 
   const titleInput = document.getElementById('titleInput');
   const printBtn = document.getElementById('printBtn');
@@ -87,7 +91,7 @@
   // inkDark 150: 작은 원본을 1200으로 키우면 안티앨리어싱 때문에 선 픽셀 최대값이 120~150까지 올라가서
   // 110으로는 점선이 됐다(실측). 회색 그림자가 딸려오면 내릴 것.
   const DEFAULTS = {
-    inkDark: 150, denoise: 3, thickness: 1, colorEdgeStrength: 70, lineTone: 100,
+    inkDark: 150, denoise: 3, thickness: 1, colorEdgeStrength: 70, lineTone: 100, gapClose: 12, tinyFill: 150,
     bgRemove: true, silhouette: true, colorEdge: true,
   };
 
@@ -172,6 +176,8 @@
     [thickness, thicknessVal],
     [colorEdgeStrength, colorEdgeStrengthVal],
     [lineTone, lineToneVal],
+    [gapClose, gapCloseVal],
+    [tinyFill, tinyFillVal],
   ].forEach(([input, out]) => {
     input.addEventListener('input', () => {
       out.textContent = input.value;
@@ -198,6 +204,10 @@
     colorEdgeStrength.value = DEFAULTS.colorEdgeStrength;
     lineTone.value = DEFAULTS.lineTone;
     lineToneVal.textContent = DEFAULTS.lineTone;
+    gapClose.value = DEFAULTS.gapClose;
+    gapCloseVal.textContent = DEFAULTS.gapClose;
+    tinyFill.value = DEFAULTS.tinyFill;
+    tinyFillVal.textContent = DEFAULTS.tinyFill;
     inkDarkVal.textContent = DEFAULTS.inkDark;
     denoiseVal.textContent = DEFAULTS.denoise;
     thicknessVal.textContent = DEFAULTS.thickness;
@@ -404,6 +414,12 @@
 
     // 3) 색 경계 선
     if (colorEdge.checked) addLayer(colorEdgeMask(imageData, width, height, parseFloat(colorEdgeStrength.value)));
+
+    // 4) 색칠공부 조건 맞추기: 닫힌 영역 + 칠할 수 있는 크기
+    const gap = parseFloat(gapClose.value);
+    if (gap > 0) bridgeGaps(mask, width, height, gap);
+    const minArea = parseFloat(tinyFill.value);
+    if (minArea > 0) fillTinyRegions(mask, width, height, minArea);
 
     // 굵기 1 = 원본 그대로. 크면 그만큼 팽창, 작으면(0~0.5) 그만큼 침식
     const t = parseFloat(thickness.value);
@@ -1046,6 +1062,181 @@
       }
       frontier = next;
     }
+  }
+
+  // ---------- 색칠공부 다듬기 ----------
+  // 끊긴 선 잇기: 선의 끝점에서 "진행 방향"으로 maxGap px 안에 다른 선이 있으면 직선으로 이어 영역을 닫는다.
+  // 방향을 보고 쏘는 이유: 그냥 반경 안 아무 선에나 붙이면 나란히 가는 이중선끼리 사다리처럼 엮인다.
+  // 끝점·방향은 1px 뼈대(Zhang-Suen)에서 구하고, 선은 원래 마스크에 그린다.
+  function bridgeGaps(mask, width, height, maxGap) {
+    const skel = thinZhangSuen(mask.slice(), width, height);
+    const n = width * height;
+    const neighborsOf = (i, out) => {
+      const x = i % width;
+      const y = (i / width) | 0;
+      let k = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const j = ny * width + nx;
+          if (skel[j]) out[k++] = j;
+        }
+      }
+      return k;
+    };
+    const nb = new Int32Array(8);
+    const endpoints = [];
+    for (let i = 0; i < n; i++) if (skel[i] && neighborsOf(i, nb) === 1) endpoints.push(i);
+
+    const TRACE = 8;      // 방향을 잴 때 뒤로 따라가는 길이
+    const ANGLES = [0, -0.35, 0.35, -0.7, 0.7]; // 정면 → 좌우 20° → 40° 순서로 시도
+    const drawR = 1.5;    // 이어 그리는 선 반지름 (원본 선 굵기 ~3px)
+
+    for (let e = 0; e < endpoints.length; e++) {
+      const end = endpoints[e];
+      // 뒤로 TRACE 픽셀 따라가 방향 벡터를 구한다 (분기점을 만나면 거기까지)
+      let cur = end;
+      let prev = -1;
+      let len = 0;
+      while (len < TRACE) {
+        const k = neighborsOf(cur, nb);
+        let next = -1;
+        for (let t = 0; t < k; t++) if (nb[t] !== prev) { if (next >= 0) { next = -2; break; } next = nb[t]; }
+        if (next < 0) break;
+        prev = cur;
+        cur = next;
+        len++;
+      }
+      if (len < 3) continue;
+      const ex = end % width, ey = (end / width) | 0;
+      const tx = cur % width, ty = (cur / width) | 0;
+      let dx = ex - tx, dy = ey - ty;
+      const norm = Math.hypot(dx, dy) || 1;
+      dx /= norm; dy /= norm;
+
+      let hit = -1;
+      for (let a = 0; a < ANGLES.length && hit < 0; a++) {
+        const ca = Math.cos(ANGLES[a]), sa = Math.sin(ANGLES[a]);
+        const rx = dx * ca - dy * sa, ry = dx * sa + dy * ca;
+        // 자기 선 끝 두께를 벗어난 3px부터 쏜다
+        for (let t = 3; t <= maxGap; t++) {
+          const px = Math.round(ex + rx * t), py = Math.round(ey + ry * t);
+          if (px < 1 || px >= width - 1 || py < 1 || py >= height - 1) break;
+          const i = py * width + px;
+          // 진행 방향에 수직으로 ±1px 도 본다 (대각선 계단 때문에 정확히 한 픽셀만 보면 놓친다)
+          if (mask[i] || mask[i + 1] || mask[i - 1] || mask[i + width] || mask[i - width]) { hit = i; break; }
+        }
+      }
+      if (hit < 0) continue;
+      drawLine(mask, width, height, ex, ey, hit % width, (hit / width) | 0, drawR);
+    }
+  }
+
+  function drawLine(mask, width, height, x0, y0, x1, y1, radius) {
+    const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0)));
+    const r = Math.ceil(radius), rSq = radius * radius;
+    for (let s = 0; s <= steps; s++) {
+      const cx = Math.round(x0 + (x1 - x0) * s / steps);
+      const cy = Math.round(y0 + (y1 - y0) * s / steps);
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx * dx + dy * dy > rSq) continue;
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          mask[ny * width + nx] = 1;
+        }
+      }
+    }
+  }
+
+  // 작은 조각 정리: 선으로 둘러싸인 흰 조각(4-연결) 중 넓이가 minArea 미만이고 이미지 가장자리에 안 닿은 것은
+  // 칠할 수 없는 크기라 선으로 메운다 (이중선 사이 틈, 점각 사이 구멍 등).
+  // 단, **가늘고 긴 틈만** 메운다: 눈 하이라이트·이빨처럼 작아도 동그란 흰 면은 의미 있는 부위라 남긴다(실측 회귀).
+  // 판정 두 가지를 다 만족해야 틈: (1) 조각 안에 "테두리에서 2px 이상 떨어진 픽셀"이 없다(=폭 5px 미만),
+  // (2) 길쭉하다(둘러싼 상자의 긴 변 ≥ 짧은 변 × 3). 눈 하이라이트는 폭 5px라 (1)은 통과하지만 동그래서 (2)에서 걸러진다.
+  function fillTinyRegions(mask, width, height, minArea) {
+    const n = width * height;
+    const seen = new Uint8Array(n);
+    const stack = new Int32Array(n);
+    const comp = new Int32Array(n);
+    const inner = new Uint8Array(n); // 조각 내부 1단계 픽셀 표시 (조각마다 재사용)
+    const isWhite = (i) => !mask[i];
+    const allNeighbors = (i, pred) => {
+      const x = i % width, y = (i / width) | 0;
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) return false;
+      return pred(i - 1) && pred(i + 1) && pred(i - width) && pred(i + width)
+        && pred(i - width - 1) && pred(i - width + 1) && pred(i + width - 1) && pred(i + width + 1);
+    };
+    for (let s = 0; s < n; s++) {
+      if (mask[s] || seen[s]) continue;
+      let top = 0, cnt = 0, touchesBorder = false;
+      let minX = width, maxX = -1, minY = height, maxY = -1;
+      stack[top++] = s;
+      seen[s] = 1;
+      while (top > 0) {
+        const i = stack[--top];
+        comp[cnt++] = i;
+        const x = i % width;
+        const y = (i / width) | 0;
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (x === 0 || y === 0 || x === width - 1 || y === height - 1) touchesBorder = true;
+        if (x > 0 && !mask[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; stack[top++] = i - 1; }
+        if (x < width - 1 && !mask[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; stack[top++] = i + 1; }
+        if (y > 0 && !mask[i - width] && !seen[i - width]) { seen[i - width] = 1; stack[top++] = i - width; }
+        if (y < height - 1 && !mask[i + width] && !seen[i + width]) { seen[i + width] = 1; stack[top++] = i + width; }
+      }
+      if (touchesBorder || cnt >= minArea) continue;
+      const bw = maxX - minX + 1, bh = maxY - minY + 1;
+      if (Math.max(bw, bh) < 3 * Math.min(bw, bh)) continue; // 동그란 조각(하이라이트·이빨)은 남긴다
+      // 두께 검사: 1단계 내부(8이웃 전부 흰색) → 그 안에 2단계 내부가 있으면 "면"이라 남긴다
+      let hasDeep = false;
+      for (let k = 0; k < cnt; k++) inner[comp[k]] = allNeighbors(comp[k], isWhite) ? 1 : 0;
+      for (let k = 0; k < cnt && !hasDeep; k++) {
+        if (inner[comp[k]] && allNeighbors(comp[k], (j) => inner[j])) hasDeep = true;
+      }
+      for (let k = 0; k < cnt; k++) inner[comp[k]] = 0;
+      if (hasDeep) continue;
+      for (let k = 0; k < cnt; k++) mask[comp[k]] = 1;
+    }
+  }
+
+  // Zhang-Suen 세선화: 굵은 선을 가운데 1px 뼈대만 남기고 깎는다. 연결은 끊지 않는다.
+  function thinZhangSuen(mask, width, height) {
+    const toDelete = [];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let pass = 0; pass < 2; pass++) {
+        toDelete.length = 0;
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const i = y * width + x;
+            if (!mask[i]) continue;
+            const p2 = mask[i - width], p3 = mask[i - width + 1], p4 = mask[i + 1], p5 = mask[i + width + 1];
+            const p6 = mask[i + width], p7 = mask[i + width - 1], p8 = mask[i - 1], p9 = mask[i - width - 1];
+            const b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+            if (b < 2 || b > 6) continue;
+            let a = 0;
+            if (!p2 && p3) a++; if (!p3 && p4) a++; if (!p4 && p5) a++; if (!p5 && p6) a++;
+            if (!p6 && p7) a++; if (!p7 && p8) a++; if (!p8 && p9) a++; if (!p9 && p2) a++;
+            if (a !== 1) continue;
+            if (pass === 0) {
+              if ((p2 && p4 && p6) || (p4 && p6 && p8)) continue;
+            } else if ((p2 && p4 && p8) || (p2 && p6 && p8)) {
+              continue;
+            }
+            toDelete.push(i);
+          }
+        }
+        for (let k = 0; k < toDelete.length; k++) mask[toDelete[k]] = 0;
+        if (toDelete.length) changed = true;
+      }
+    }
+    return mask;
   }
 
   function erodeMask(mask, width, height, radius) {

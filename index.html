@@ -78,6 +78,14 @@
         </div>
 
         <div class="control-row control-row-checkbox">
+          <span class="row-title">색칠 다듬기 <span class="help" tabindex="0" data-tip="색칠공부 조건에 맞추는 후처리. 끊긴 선 잇기: 선 끝에서 이 거리(px) 안에 다른 선이 있으면 이어서 영역을 닫아요. 작은 조각 정리: 이 넓이(px²)보다 작아서 칠할 수 없는 갇힌 조각은 선으로 메워요">?</span></span>
+          <label for="gapClose" class="sub-label">끊긴 선 잇기 <span class="value" id="gapCloseVal">12</span></label>
+          <input type="range" id="gapClose" min="0" max="40" step="1" value="12">
+          <label for="tinyFill" class="sub-label">작은 조각 정리 <span class="value" id="tinyFillVal">150</span></label>
+          <input type="range" id="tinyFill" min="0" max="1500" step="10" value="150">
+        </div>
+
+        <div class="control-row control-row-checkbox">
           <span class="row-title">용도 <span class="help" tabindex="0" data-tip="색칠용은 검고 보통 굵기, 따라 그리기용은 연한 회색 가는 선이라 위에 펜으로 따라 그릴 수 있어요. 아래 굵기·진하기를 한 번에 맞춰요">?</span></span>
           <div class="preset-row">
             <button class="preset-btn" type="button" data-thickness="1" data-tone="100">🎨 색칠용</button>
