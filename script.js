@@ -6,6 +6,18 @@
   // 결과 PNG도 인쇄하기엔 너무 작다. 확대해 두면 슬라이더 감각이 큰 사진과 같아진다.
   const MIN_DIMENSION = 1200;
 
+  // ---------- AI 윤곽 모드 (PiDiNet) ----------
+  // 그래디언트 방식은 "이미 보이는 경계"만 뽑는다. 3D 렌더링 캐릭터의 팔처럼 색은 같고 그림자만
+  // 16단계쯤 다른 경계는 신호 자체가 없어서(피카츄 실측) 임계값을 아무리 내려도 못 살린다.
+  // PiDiNet(ICCV 2021)은 사람이 그린 윤곽(BSDS500)으로 학습된 경량 엣지 모델이라 그런 경계를 "안다".
+  // tiny 버전(0.4MB)을 onnxruntime-web으로 브라우저 안에서 돌린다 — 서버·API 키 없음, 이미지 안 나감.
+  // 실측(1024px): WebGPU 첫 실행 2.7초(셰이더 컴파일), 이후 0.25초. WASM 폴백은 ~1초.
+  const AI_MODEL_URL = 'models/pidinet_tiny.onnx';
+  const ORT_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js';
+  const AI_MAX_DIMENSION = 1024; // 추론 해상도. 1200으로 올리면 시간만 늘고 선 품질은 그대로
+  const AI_MEAN = [0.485, 0.456, 0.406]; // ImageNet 정규화 (모델 학습 조건)
+  const AI_STD = [0.229, 0.224, 0.225];
+
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
   const controls = document.getElementById('controls');
@@ -25,6 +37,7 @@
   const denoise = document.getElementById('denoise');
   const adaptive = document.getElementById('adaptive');
   const shading = document.getElementById('shading');
+  const modeInputs = document.querySelectorAll('input[name="mode"]');
   const sensitivityVal = document.getElementById('sensitivityVal');
   const thicknessVal = document.getElementById('thicknessVal');
   const denoiseVal = document.getElementById('denoiseVal');
@@ -42,7 +55,14 @@
   const DEFAULTS = { sensitivity: 70, thickness: 1, denoise: 3, adaptive: 60, shading: false };
 
   let sourceImage = null; // HTMLImageElement
-  let renderQueued = false;
+  let rendering = false;      // 렌더가 진행 중 (AI 모드는 GPU를 기다리는 동안 입력 이벤트가 계속 들어온다)
+  let rerunRequested = false; // 진행 중에 슬라이더가 움직였으면 끝나고 한 번 더
+  let aiSessionPromise = null; // onnxruntime 세션 (한 번만 만든다)
+  let aiCache = null;          // { image, width, height, fused } — 슬라이더만 바꿀 땐 모델을 다시 안 돌린다
+
+  function currentMode() {
+    return document.querySelector('input[name="mode"]:checked').value;
+  }
 
   // ---------- 업로드 ----------
   dropZone.addEventListener('click', () => fileInput.click());
@@ -109,6 +129,13 @@
 
   shading.addEventListener('change', scheduleRender);
 
+  modeInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      controls.dataset.mode = currentMode();
+      scheduleRender();
+    });
+  });
+
   resetBtn.addEventListener('click', () => {
     sensitivity.value = DEFAULTS.sensitivity;
     thickness.value = DEFAULTS.thickness;
@@ -119,6 +146,8 @@
     thicknessVal.textContent = DEFAULTS.thickness;
     denoiseVal.textContent = DEFAULTS.denoise;
     adaptiveVal.textContent = DEFAULTS.adaptive;
+    modeInputs.forEach((input) => { input.checked = input.value === 'ai'; });
+    controls.dataset.mode = 'ai';
     scheduleRender();
   });
 
@@ -153,28 +182,150 @@
     link.click();
   });
 
-  // ---------- 렌더 스케줄링 (슬라이더 연속 입력 debounce) ----------
+  // ---------- 렌더 스케줄링 ----------
+  // 렌더가 도는 동안 들어온 입력은 플래그 하나로 합쳐서, 끝난 뒤 마지막 상태로 한 번만 다시 돈다.
+  // (예전엔 "큐에 있으면 무시"였는데, AI 모드는 GPU를 await 하는 동안 슬라이더 이벤트가 진짜로
+  //  들어오기 때문에 마지막 위치가 버려지는 문제가 생긴다.)
   function scheduleRender() {
     if (!sourceImage) return;
-    if (renderQueued) return;
-    renderQueued = true;
+    rerunRequested = true;
+    if (rendering) return;
+    rendering = true;
     processingOverlay.textContent = '변환 중…';
     processingOverlay.hidden = false;
     // requestAnimationFrame에 의존하면 탭이 백그라운드/비표시 상태일 때 콜백이 멈춘다.
     // setTimeout만 사용해 화면 표시 여부와 무관하게 실행되도록 한다.
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        render();
+        while (rerunRequested) {
+          rerunRequested = false;
+          if (currentMode() === 'ai') await renderAI();
+          else render();
+        }
         processingOverlay.hidden = true;
       } catch (err) {
         // 에러가 나도 "변환 중"에 무한히 멈춰있지 않고 사용자에게 보여준다.
         console.error('색칠공부 변환 실패:', err);
+        rerunRequested = false;
         processingOverlay.hidden = false;
         processingOverlay.textContent = '변환 중 오류가 났어요: ' + err.message;
       } finally {
-        renderQueued = false;
+        rendering = false;
       }
     }, 0);
+  }
+
+  // ---------- AI 윤곽 모드 ----------
+  function loadScript(url) {
+    return new Promise((resolve, reject) => {
+      if (window.ort) { resolve(); return; }
+      const el = document.createElement('script');
+      el.src = url;
+      el.onload = resolve;
+      el.onerror = () => reject(new Error('AI 라이브러리를 못 불러왔어요 (인터넷 연결 확인)'));
+      document.head.appendChild(el);
+    });
+  }
+
+  function getAISession() {
+    if (aiSessionPromise) return aiSessionPromise;
+    aiSessionPromise = (async () => {
+      await loadScript(ORT_SCRIPT_URL);
+      // WebGPU가 되면 GPU, 아니면 WASM으로 자동 폴백 (순서대로 시도)
+      return ort.InferenceSession.create(AI_MODEL_URL, { executionProviders: ['webgpu', 'wasm'] });
+    })();
+    aiSessionPromise.catch(() => { aiSessionPromise = null; }); // 실패하면 다음에 다시 시도할 수 있게
+    return aiSessionPromise;
+  }
+
+  // 추론 해상도: 긴 변 AI_MAX_DIMENSION, 각 변은 8의 배수 (모델이 /8 다운샘플 후 다시 키우므로 안전하게)
+  function fitSizeAI(w, h) {
+    const scale = AI_MAX_DIMENSION / Math.max(w, h);
+    const r = (v) => Math.max(8, Math.round(v * scale / 8) * 8);
+    return { width: r(w), height: r(h) };
+  }
+
+  // 모델 출력(픽셀별 "여기가 윤곽일 확률" 0~1)을 이미지당 한 번만 계산해 캐시한다.
+  async function getFusedMap() {
+    if (aiCache && aiCache.image === sourceImage) return aiCache;
+    const image = sourceImage;
+
+    if (!aiSessionPromise) processingOverlay.textContent = 'AI 모델 준비 중… (처음 한 번만)';
+    const session = await getAISession();
+    processingOverlay.textContent = 'AI가 윤곽을 찾는 중…';
+
+    const { width, height } = fitSizeAI(image.naturalWidth, image.naturalHeight);
+    const c = document.createElement('canvas');
+    c.width = width;
+    c.height = height;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, 0, 0, width, height);
+    const d = ctx.getImageData(0, 0, width, height).data;
+
+    const n = width * height;
+    const x = new Float32Array(3 * n); // CHW
+    for (let i = 0; i < n; i++) {
+      for (let ch = 0; ch < 3; ch++) {
+        x[ch * n + i] = (d[i * 4 + ch] / 255 - AI_MEAN[ch]) / AI_STD[ch];
+      }
+    }
+    const out = await session.run({ image: new ort.Tensor('float32', x, [1, 3, height, width]) });
+    const fused = Float32Array.from(out.fused.data, (v) => (v < 0 ? 0 : v > 1 ? 1 : v));
+
+    aiCache = { image, width, height, fused };
+    return aiCache;
+  }
+
+  async function renderAI() {
+    const { image, width, height, fused } = await getFusedMap();
+    if (image !== sourceImage) return; // 기다리는 사이 다른 이미지로 바뀜 — 다음 루프가 처리
+
+    // 출력이 확률이라 임계값이 사진마다 흔들리지 않는다(그래디언트처럼 백분위로 잡을 필요 없음).
+    // 0.2~0.5 사이는 거의 같은 그림이고(실측 검은 비율 5.2%→4.1%), 그 밖에서 선이 늘고 준다.
+    const s = parseFloat(sensitivity.value); // 0~115
+    const thr = clamp(0.85 - 0.7 * (s / 100), 0.08, 0.9); // 기본 70 → 0.36
+
+    // 하드 임계값 하나면 확률이 오르내리는 약한 선(팔 위쪽 그림자 경계)이 점선으로 끊긴다.
+    // 강한 선(thr 이상)에서 출발해 이어지는 약한 선(thr의 35%까지)은 살린다 — 기본 모드와 같은 원리.
+    let mask = hysteresis(fused, width, height, thr * 0.35, thr);
+
+    removeSpecks(mask, width, height, 30);
+
+    // 모델 선은 이미 ~4px라 굵기 1이 "그대로". 그보다 크면 그만큼 더 두껍게.
+    const extra = parseFloat(thickness.value) - 1;
+    if (extra > 0) mask = dilateDisc(mask, width, height, extra);
+
+    paintMask(mask, null, width, height);
+  }
+
+  // 마스크(1=선) + 음영 마스크(1=연한 회색)를 결과 캔버스에 그린다.
+  function paintMask(mask, shadeMask, width, height) {
+    const SHADE_TONE = 225;
+    resultCanvas.width = width;
+    resultCanvas.height = height;
+    const out = document.createElement('canvas');
+    out.width = width;
+    out.height = height;
+    const octx = out.getContext('2d');
+    const outData = octx.createImageData(width, height);
+    for (let i = 0; i < mask.length; i++) {
+      let v;
+      if (mask[i]) {
+        v = 0; // 윤곽선 = 검정
+      } else if (shadeMask && shadeMask[i]) {
+        v = SHADE_TONE; // 음영 = 연한 회색
+      } else {
+        v = 255; // 배경 = 흰색
+      }
+      const o = i * 4;
+      outData.data[o] = v;
+      outData.data[o + 1] = v;
+      outData.data[o + 2] = v;
+      outData.data[o + 3] = 255;
+    }
+    octx.putImageData(outData, 0, 0);
+    resultCanvas.getContext('2d').drawImage(out, 0, 0);
   }
 
   // ---------- 이미지 처리 파이프라인 ----------
@@ -189,8 +340,6 @@
   //   6) 원하는 굵기로 두껍게 만든다.
   function render() {
     const { width, height } = fitSize(sourceImage.naturalWidth, sourceImage.naturalHeight);
-    resultCanvas.width = width;
-    resultCanvas.height = height;
 
     const src = document.createElement('canvas');
     src.width = width;
@@ -264,31 +413,7 @@
       }
     }
 
-    const SHADE_TONE = 225;
-
-    const out = document.createElement('canvas');
-    out.width = width;
-    out.height = height;
-    const octx = out.getContext('2d');
-    const outData = octx.createImageData(width, height);
-    for (let i = 0; i < mask.length; i++) {
-      let v;
-      if (mask[i]) {
-        v = 0; // 윤곽선 = 검정
-      } else if (shadeMask && shadeMask[i]) {
-        v = SHADE_TONE; // 음영 = 연한 회색
-      } else {
-        v = 255; // 배경 = 흰색
-      }
-      const o = i * 4;
-      outData.data[o] = v;
-      outData.data[o + 1] = v;
-      outData.data[o + 2] = v;
-      outData.data[o + 3] = 255;
-    }
-    octx.putImageData(outData, 0, 0);
-
-    resultCanvas.getContext('2d').drawImage(out, 0, 0);
+    paintMask(mask, shadeMask, width, height);
   }
 
   // R/G/B 채널과 휘도를 각각 Float32 배열로 분리
@@ -307,6 +432,10 @@
     }
     return { r, g, b, gray };
   }
+
+  // 페이지가 뜨자마자 AI 라이브러리+모델을 미리 받아둔다 (0.4MB 모델 + 런타임). 실패해도 조용히 —
+  // 실제 변환 때 다시 시도하고 그때 에러를 보여준다.
+  getAISession().catch(() => {});
 
   function toGrayscale(imageData) {
     const { data, width, height } = imageData;

@@ -40,8 +40,17 @@
         </div>
       </section>
 
-      <section class="controls" id="controls" hidden>
+      <section class="controls" id="controls" hidden data-mode="ai">
         <div class="control-row">
+          <span class="row-title">변환 방식</span>
+          <div class="segmented" role="radiogroup" aria-label="변환 방식">
+            <label><input type="radio" name="mode" value="ai" checked><span>AI 윤곽 <small>추천</small></span></label>
+            <label><input type="radio" name="mode" value="basic"><span>기본</span></label>
+          </div>
+          <p class="hint" data-mode="ai">사람이 그린 윤곽으로 학습한 모델이 그림자만 다른 경계(팔·주름)까지 찾아요. 이것도 브라우저 안에서만 돌아요</p>
+          <p class="hint" data-mode="basic">색이 바뀌는 곳을 수학적으로 찾는 방식. 아래 세부 조절이 많아요</p>
+        </div>
+        <div class="control-row" data-mode="basic">
           <label for="denoise">단순화 정도 <span class="value" id="denoiseVal">3</span></label>
           <input type="range" id="denoise" min="0.5" max="30" step="0.5" value="3">
           <p class="hint">낮추면 정교한 어른용 컬러링북, 높이면 아이들용 단순한 그림</p>
@@ -56,13 +65,13 @@
           <input type="range" id="thickness" min="0" max="5" step="0.5" value="1">
           <p class="hint">숫자가 클수록 선이 굵어져요</p>
         </div>
-        <div class="control-row">
+        <div class="control-row" data-mode="basic">
           <label for="adaptive">영역별 적응 <span class="value" id="adaptiveVal">60</span></label>
           <input type="range" id="adaptive" min="0" max="100" step="5" value="60">
           <p class="hint">0이면 사진 전체 하나의 기준. 올리면 밝은 구역·어두운 구역을 따로 판단해서 해·하늘처럼 대비 약한 것도 잡아요</p>
         </div>
 
-        <div class="control-row control-row-checkbox">
+        <div class="control-row control-row-checkbox" data-mode="basic">
           <label class="checkbox-label" for="shading">
             <input type="checkbox" id="shading">
             음영(그림자) 추가
