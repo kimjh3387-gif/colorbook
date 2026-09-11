@@ -290,11 +290,14 @@
     // 강한 선(thr 이상)에서 출발해 이어지는 약한 선(thr의 35%까지)은 살린다 — 기본 모드와 같은 원리.
     let mask = hysteresis(fused, width, height, thr * 0.35, thr);
 
+    suppressBorder(mask, width, height, 8); // 모델이 이미지 가장자리(패딩 경계)에서 내는 가짜 선 제거
     removeSpecks(mask, width, height, 30);
 
-    // 모델 선은 이미 ~4px라 굵기 1이 "그대로". 그보다 크면 그만큼 더 두껍게.
-    const extra = parseFloat(thickness.value) - 1;
-    if (extra > 0) mask = dilateDisc(mask, width, height, extra);
+    // 모델 선은 ~5px 굵기라 그대로 두면 슬라이더가 "더 굵게"밖에 못 한다. 1px 뼈대로 깎은 뒤
+    // 슬라이더만큼 키워서 기본 모드와 같은 감각(0 = 가장 가는 선)으로 맞춘다.
+    mask = thinZhangSuen(mask, width, height);
+    const thicknessRadius = parseFloat(thickness.value);
+    if (thicknessRadius > 0) mask = dilateDisc(mask, width, height, thicknessRadius);
 
     paintMask(mask, null, width, height);
   }
@@ -719,6 +722,44 @@
   // 원형 커널 최대값 필터 (선 굵기 확장).
   // 정사각 커널은 선이 각지게 굵어지고 크기가 껑충 뛰어서(9→25→49px) 중간 굵기가 없다.
   // 원형은 면적이 완만하게 늘어 0.5 단위 조절이 실제로 눈에 보인다.
+  // Zhang-Suen 세선화: 굵은 선을 가운데 1px 뼈대만 남기고 깎는다. 연결은 끊지 않는다.
+  // 두 패스를 번갈아 돌리며 더 지울 픽셀이 없을 때까지 반복 (선 굵기 5px면 3번 안팎).
+  function thinZhangSuen(mask, width, height) {
+    const toDelete = [];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let pass = 0; pass < 2; pass++) {
+        toDelete.length = 0;
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const i = y * width + x;
+            if (!mask[i]) continue;
+            // 8이웃을 시계 방향으로 p2(위)부터
+            const p2 = mask[i - width], p3 = mask[i - width + 1], p4 = mask[i + 1], p5 = mask[i + width + 1];
+            const p6 = mask[i + width], p7 = mask[i + width - 1], p8 = mask[i - 1], p9 = mask[i - width - 1];
+            const b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+            if (b < 2 || b > 6) continue; // 끝점이거나 안쪽 픽셀이면 유지
+            // 0→1 전이가 정확히 한 번이어야 지워도 연결이 안 끊긴다
+            let a = 0;
+            if (!p2 && p3) a++; if (!p3 && p4) a++; if (!p4 && p5) a++; if (!p5 && p6) a++;
+            if (!p6 && p7) a++; if (!p7 && p8) a++; if (!p8 && p9) a++; if (!p9 && p2) a++;
+            if (a !== 1) continue;
+            if (pass === 0) {
+              if ((p2 && p4 && p6) || (p4 && p6 && p8)) continue;
+            } else if ((p2 && p4 && p8) || (p2 && p6 && p8)) {
+              continue;
+            }
+            toDelete.push(i);
+          }
+        }
+        for (let k = 0; k < toDelete.length; k++) mask[toDelete[k]] = 0;
+        if (toDelete.length) changed = true;
+      }
+    }
+    return mask;
+  }
+
   function dilateDisc(mask, width, height, radius) {
     const r = Math.ceil(radius);
     const rSq = radius * radius;
