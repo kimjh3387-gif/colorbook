@@ -116,10 +116,12 @@ body {
 
 .upload-zone:has(.upload-thumb:not([hidden])) { padding: 8px; }
 
+/* 썸네일 높이를 고정해서 세로 사진을 올려도 왼쪽 패널이 길어지지 않게 */
 .upload-thumb canvas {
   display: block;
   width: 100%;
-  height: auto;
+  height: 150px;
+  object-fit: contain;
   border-radius: 8px;
 }
 .thumb-bar {
@@ -302,13 +304,16 @@ button {
   justify-content: center;
 }
 
+/* 캔버스 틀 높이를 화면에 고정하고(헤더+푸터+여백 ≈ 270px) 그 안에 object-fit:contain 으로 맞춘다.
+   max-width/max-height 방식은 원본이 작으면 작은 그대로 떠서(확대가 안 됨) 화면이 텅 비었다 */
+.preview-card .canvas-wrap {
+  height: calc(100vh - 270px);
+  min-height: 320px;
+}
 .canvas-wrap canvas {
-  /* 폭·높이 둘 다 상한을 두고 width/height:auto 로 비율 유지.
-     세로로 긴 사진이 화면 밖으로 삐져나가지 않으면서, 가로 사진은 폭을 꽉 채운다 */
-  max-width: 100%;
-  max-height: calc(100vh - 270px);
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
   display: block;
 }
 
