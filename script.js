@@ -51,6 +51,13 @@
   const denoiseVal = document.getElementById('denoiseVal');
   const adaptiveVal = document.getElementById('adaptiveVal');
 
+  const eraserBtn = document.getElementById('eraserBtn');
+  const eraserSizeWrap = document.getElementById('eraserSizeWrap');
+  const eraserSize = document.getElementById('eraserSize');
+  const undoBtn = document.getElementById('undoBtn');
+  const clearEraseBtn = document.getElementById('clearEraseBtn');
+  const resultWrap = document.getElementById('resultWrap');
+  const eraserCursor = document.getElementById('eraserCursor');
   const lightbox = document.getElementById('lightbox');
   const lightboxImg = document.getElementById('lightboxImg');
   const lightboxClose = document.getElementById('lightboxClose');
@@ -67,6 +74,15 @@
   let rerunRequested = false; // 진행 중에 슬라이더가 움직였으면 끝나고 한 번 더
   let aiSessionPromise = null; // onnxruntime 세션 (한 번만 만든다)
   let aiCache = null;          // { image, width, height, fused } — 슬라이더만 바꿀 땐 모델을 다시 안 돌린다
+
+  // ---------- 지우개 상태 ----------
+  // 알고리즘이 못 가리는 선(인형 봉제선 등)은 사람이 지운다. 지운 자국은 캔버스 크기에 대한 비율 좌표로
+  // 저장해서, 슬라이더를 다시 만져 결과가 새로 그려지거나(=paintMask) 모드가 바뀌어 캔버스 크기가
+  // 달라져도 같은 자리에 다시 적용된다. 새 이미지를 올리면 비운다.
+  let eraseStrokes = [];   // [{ r: 반지름(폭 대비 비율), pts: [[x,y], ...] (0~1) }]
+  let lastPaint = null;    // 마지막으로 그린 { mask, shadeMask, width, height } — 되돌리기용 재도색
+  let eraserOn = false;
+  let activeStroke = null;
 
   function currentMode() {
     return document.querySelector('input[name="mode"]:checked').value;
@@ -95,6 +111,8 @@
     img.onload = () => {
       sourceImage = img;
       URL.revokeObjectURL(url);
+      eraseStrokes = [];
+      updateEraserButtons();
       drawOriginal();
       uploadPrompt.hidden = true;
       uploadThumb.hidden = false;
@@ -379,7 +397,151 @@
     }
     octx.putImageData(outData, 0, 0);
     resultCanvas.getContext('2d').drawImage(out, 0, 0);
+    lastPaint = { mask, shadeMask, width, height };
+    applyEraseStrokes();
   }
+
+  // ---------- 지우개 ----------
+  function applyEraseStrokes() {
+    const ctx = resultCanvas.getContext('2d');
+    const w = resultCanvas.width;
+    for (let s = 0; s < eraseStrokes.length; s++) drawStroke(ctx, eraseStrokes[s], w);
+  }
+
+  function drawStroke(ctx, stroke, w) {
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#fff';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = stroke.r * 2 * w;
+    const pts = stroke.pts;
+    if (pts.length === 1) {
+      ctx.beginPath();
+      ctx.arc(pts[0][0] * w, pts[0][1] * w, stroke.r * w, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0] * w, pts[0][1] * w);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0] * w, pts[i][1] * w);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 마지막 결과를 다시 그린 뒤 남은 지우개 자국만 얹는다 (되돌리기/전부 취소)
+  function repaintWithStrokes() {
+    if (!lastPaint) return;
+    const { mask, shadeMask, width, height } = lastPaint;
+    paintMask(mask, shadeMask, width, height);
+  }
+
+  function updateEraserButtons() {
+    undoBtn.disabled = eraseStrokes.length === 0;
+    clearEraseBtn.disabled = eraseStrokes.length === 0;
+  }
+
+  function setEraser(on) {
+    eraserOn = on;
+    eraserBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    eraserSizeWrap.hidden = !on;
+    resultWrap.classList.toggle('erasing', on);
+    if (!on) eraserCursor.hidden = true;
+  }
+
+  eraserBtn.addEventListener('click', () => setEraser(!eraserOn));
+
+  undoBtn.addEventListener('click', () => {
+    eraseStrokes.pop();
+    updateEraserButtons();
+    repaintWithStrokes();
+  });
+
+  clearEraseBtn.addEventListener('click', () => {
+    eraseStrokes = [];
+    updateEraserButtons();
+    repaintWithStrokes();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !undoBtn.disabled) {
+      e.preventDefault();
+      undoBtn.click();
+    }
+  });
+
+  // 캔버스는 object-fit: contain 으로 틀 안에 레터박스로 놓이므로, 화면 좌표 → 캔버스 비율 좌표로
+  // 바꿀 때 실제 그림이 차지하는 영역(스케일·오프셋)을 계산해야 한다. 엘리먼트 사각형만 보면 어긋난다.
+  function canvasGeometry() {
+    const rect = resultCanvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / resultCanvas.width, rect.height / resultCanvas.height);
+    const drawnW = resultCanvas.width * scale;
+    const drawnH = resultCanvas.height * scale;
+    return {
+      scale,
+      left: rect.left + (rect.width - drawnW) / 2,
+      top: rect.top + (rect.height - drawnH) / 2,
+      drawnW,
+      drawnH,
+    };
+  }
+
+  function toNormalized(e) {
+    const g = canvasGeometry();
+    // x, y 모두 "캔버스 폭" 기준 비율로 저장한다 (반지름도 폭 기준) → 가로세로 어디서든 원이 원으로 그려진다
+    return [
+      (e.clientX - g.left) / g.drawnW,
+      (e.clientY - g.top) / g.drawnH * (resultCanvas.height / resultCanvas.width),
+    ];
+  }
+
+  function moveCursor(e) {
+    const g = canvasGeometry();
+    const wrapRect = resultWrap.getBoundingClientRect();
+    const px = parseFloat(eraserSize.value) * g.scale; // 캔버스 픽셀 → 화면 픽셀
+    eraserCursor.style.width = px + 'px';
+    eraserCursor.style.height = px + 'px';
+    eraserCursor.style.left = (e.clientX - wrapRect.left) + 'px';
+    eraserCursor.style.top = (e.clientY - wrapRect.top) + 'px';
+    eraserCursor.hidden = false;
+  }
+
+  resultWrap.addEventListener('pointerdown', (e) => {
+    if (!eraserOn || !lastPaint) return;
+    e.preventDefault();
+    resultWrap.setPointerCapture(e.pointerId);
+    activeStroke = { r: parseFloat(eraserSize.value) / 2 / resultCanvas.width, pts: [toNormalized(e)] };
+    eraseStrokes.push(activeStroke);
+    drawStroke(resultCanvas.getContext('2d'), activeStroke, resultCanvas.width);
+    updateEraserButtons();
+    moveCursor(e);
+  });
+
+  resultWrap.addEventListener('pointermove', (e) => {
+    if (!eraserOn) return;
+    moveCursor(e);
+    if (!activeStroke) return;
+    const p = toNormalized(e);
+    const last = activeStroke.pts[activeStroke.pts.length - 1];
+    activeStroke.pts.push(p);
+    // 마지막 구간만 덧그린다 (전체 다시 그리면 긴 획에서 느려짐)
+    const ctx = resultCanvas.getContext('2d');
+    const w = resultCanvas.width;
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = activeStroke.r * 2 * w;
+    ctx.beginPath();
+    ctx.moveTo(last[0] * w, last[1] * w);
+    ctx.lineTo(p[0] * w, p[1] * w);
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  const endStroke = () => { activeStroke = null; };
+  resultWrap.addEventListener('pointerup', endStroke);
+  resultWrap.addEventListener('pointercancel', endStroke);
+  resultWrap.addEventListener('pointerleave', () => { eraserCursor.hidden = true; });
 
   // ---------- 이미지 처리 파이프라인 ----------
   //

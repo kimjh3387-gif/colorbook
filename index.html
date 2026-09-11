@@ -101,9 +101,19 @@
           <div class="card-head">
             <button class="zoom-btn" type="button" data-zoom="resultCanvas" title="크게 보기" aria-label="색칠공부 버전 크게 보기">🔍</button>
             <h2>색칠공부 버전</h2>
+            <div class="tools">
+              <button class="tool-btn" id="eraserBtn" type="button" aria-pressed="false" title="켜고 그림 위를 드래그하면 그 선이 지워져요">🧽 지우개</button>
+              <label class="tool-size" id="eraserSizeWrap" hidden>
+                <span>굵기</span>
+                <input type="range" id="eraserSize" min="4" max="120" step="2" value="28" aria-label="지우개 굵기">
+              </label>
+              <button class="tool-btn" id="undoBtn" type="button" disabled title="Ctrl+Z">↶ 되돌리기</button>
+              <button class="tool-btn" id="clearEraseBtn" type="button" disabled>지운 것 모두 취소</button>
+            </div>
           </div>
-          <div class="canvas-wrap checker">
+          <div class="canvas-wrap checker" id="resultWrap">
             <canvas id="resultCanvas"></canvas>
+            <div class="eraser-cursor" id="eraserCursor" hidden></div>
             <div class="processing-overlay" id="processingOverlay" hidden>변환 중…</div>
           </div>
         </div>
