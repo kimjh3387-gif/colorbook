@@ -6,6 +6,8 @@
   const fileInput = document.getElementById('fileInput');
   const controls = document.getElementById('controls');
   const previewEmpty = document.getElementById('previewEmpty');
+  const uploadPrompt = document.getElementById('uploadPrompt');
+  const uploadThumb = document.getElementById('uploadThumb');
   const previewGrid = document.getElementById('previewGrid');
   const originalCanvas = document.getElementById('originalCanvas');
   const resultCanvas = document.getElementById('resultCanvas');
@@ -59,6 +61,8 @@
       sourceImage = img;
       URL.revokeObjectURL(url);
       drawOriginal();
+      uploadPrompt.hidden = true;
+      uploadThumb.hidden = false;
       controls.hidden = false;
       previewEmpty.hidden = true;
       previewGrid.hidden = false;
@@ -110,7 +114,8 @@
 
   // ---------- 크게 보기(돋보기) ----------
   document.querySelectorAll('.zoom-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // 썸네일 쪽 돋보기는 업로드 칸 안에 있어서 파일 선택창이 같이 뜨지 않게
       const canvas = document.getElementById(btn.dataset.zoom);
       if (!canvas || !canvas.width) return;
       lightboxImg.src = canvas.toDataURL('image/png');

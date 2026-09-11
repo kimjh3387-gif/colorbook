@@ -30,6 +30,14 @@
           <p><strong>클릭</strong>하거나 이미지를 <strong>드래그</strong>하세요</p>
           <p class="hint">JPG, PNG 등 · 파일은 이 기기 안에서만 처리돼요</p>
         </div>
+        <!-- 이미지를 올리면 업로드 칸이 원본 썸네일로 바뀐다 (결과물이 오른쪽 전체를 쓰도록) -->
+        <div class="upload-thumb" id="uploadThumb" hidden>
+          <canvas id="originalCanvas"></canvas>
+          <div class="thumb-bar">
+            <span>원본 · 클릭하면 다른 이미지</span>
+            <button class="zoom-btn" type="button" data-zoom="originalCanvas" title="크게 보기" aria-label="원본 크게 보기">🔍</button>
+          </div>
+        </div>
       </section>
 
       <section class="controls" id="controls" hidden>
@@ -75,15 +83,6 @@
       </div>
 
       <div class="preview-grid" id="previewGrid" hidden>
-        <div class="preview-card">
-          <div class="card-head">
-            <button class="zoom-btn" type="button" data-zoom="originalCanvas" title="크게 보기" aria-label="원본 크게 보기">🔍</button>
-            <h2>원본</h2>
-          </div>
-          <div class="canvas-wrap">
-            <canvas id="originalCanvas"></canvas>
-          </div>
-        </div>
         <div class="preview-card">
           <div class="card-head">
             <button class="zoom-btn" type="button" data-zoom="resultCanvas" title="크게 보기" aria-label="색칠공부 버전 크게 보기">🔍</button>

@@ -114,6 +114,24 @@ body {
   background: var(--accent-soft);
 }
 
+.upload-zone:has(.upload-thumb:not([hidden])) { padding: 8px; }
+
+.upload-thumb canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.thumb-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .upload-icon { font-size: 32px; display: block; margin-bottom: 8px; }
 .upload-icon.big { font-size: 48px; }
 
@@ -197,13 +215,9 @@ button {
 
 .preview-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 16px;
   width: 100%;
-}
-
-@media (max-width: 600px) {
-  .preview-grid { grid-template-columns: 1fr; }
 }
 
 .card-head {
@@ -292,7 +306,7 @@ button {
   /* 폭·높이 둘 다 상한을 두고 width/height:auto 로 비율 유지.
      세로로 긴 사진이 화면 밖으로 삐져나가지 않으면서, 가로 사진은 폭을 꽉 채운다 */
   max-width: 100%;
-  max-height: calc(100vh - 260px);
+  max-height: calc(100vh - 270px);
   width: auto;
   height: auto;
   display: block;
