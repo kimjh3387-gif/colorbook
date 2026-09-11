@@ -40,7 +40,7 @@
         </div>
       </section>
 
-      <section class="controls" id="controls" hidden data-mode="ai">
+      <section class="controls" id="controls" hidden data-mode="ink">
         <div class="control-row control-row-checkbox control-row-first">
           <label class="checkbox-label" for="bgRemove">
             <input type="checkbox" id="bgRemove" checked>
@@ -50,27 +50,37 @@
         </div>
         <div class="control-row">
           <span class="row-title">변환 방식</span>
-          <div class="segmented segmented-3" role="radiogroup" aria-label="변환 방식">
-            <label><input type="radio" name="mode" value="ai" checked><span>AI 윤곽</span></label>
-            <label><input type="radio" name="mode" value="ink"><span>선화</span></label>
+          <div class="segmented" role="radiogroup" aria-label="변환 방식">
+            <label><input type="radio" name="mode" value="ink" checked><span>선화</span></label>
             <label><input type="radio" name="mode" value="basic"><span>기본</span></label>
           </div>
-          <p class="hint auto-hint" id="autoHint" hidden></p>
-          <p class="hint" data-mode="ai">사진·3D 렌더링용. 사람이 그린 윤곽으로 학습한 모델이 그림자만 다른 경계(팔·주름)까지 찾아요. 이것도 브라우저 안에서만 돌아요</p>
-          <p class="hint" data-mode="ink">검은 윤곽선이 이미 그려진 만화·일러스트용. 그 선을 그대로 뽑아요 (엣지 검출·AI보다 정확)</p>
+          <p class="hint" data-mode="ink">그림의 검은 선과 검게 칠해진 부분(눈·귀 끝)을 그대로 뽑아요. 만화·일러스트에 딱 맞고, 사진·인형처럼 검은 선이 없는 그림은 아래 「윤곽선 보충」이 채워줘요</p>
           <p class="hint" data-mode="basic">색이 바뀌는 곳을 수학적으로 찾는 방식. 아래 세부 조절이 많아요</p>
+        </div>
+        <div class="control-row control-row-checkbox" data-mode="ink">
+          <label class="checkbox-label" for="outlineAssist">
+            <input type="checkbox" id="outlineAssist">
+            윤곽선 보충
+          </label>
+          <p class="hint auto-hint" id="autoHint" hidden></p>
+          <p class="hint">검은 선이 없는 사진·인형·3D 그림의 몸통 윤곽을 학습된 모델(브라우저 안에서 실행)로 그려 넣어요. 그림을 올리면 필요한지 자동으로 판단해요</p>
+        </div>
+        <div class="control-row" data-mode="ink">
+          <label for="inkDark">어두움 기준 <span class="value" id="inkDarkVal">150</span></label>
+          <input type="range" id="inkDark" min="30" max="200" step="5" value="150">
+          <p class="hint">이보다 어두운 픽셀을 선·면으로 봐요. 낮추면 진짜 검은 선만, 높이면 회색 그림자까지 검게</p>
         </div>
         <div class="control-row">
           <label for="denoise">단순화 정도 <span class="value" id="denoiseVal">3</span></label>
           <input type="range" id="denoise" min="0.5" max="30" step="0.5" value="3">
-          <p class="hint">낮추면 정교한 어른용 컬러링북, 높이면 아이들용 단순한 그림. AI 모드에선 인형 봉제선·털 주름 같은 잔선을 없애는 데 써요</p>
+          <p class="hint">낮추면 정교한 어른용 컬러링북, 높이면 아이들용 단순한 그림. 선화에선 JPEG 얼룩을 뭉개고, 윤곽선 보충의 봉제선·주름 같은 잔선을 줄여요</p>
         </div>
-        <div class="control-row">
+        <div class="control-row" data-mode="basic">
           <label for="sensitivity">선 개수 <span class="value" id="sensitivityVal">70</span></label>
           <input type="range" id="sensitivity" min="0" max="115" step="0.5" value="70">
           <p class="hint">높일수록 선을 더 많이 남겨요 (100 넘어가면 아주 촘촘해져요)</p>
         </div>
-        <div class="control-row" data-mode="ai basic">
+        <div class="control-row" data-mode="ink basic">
           <label for="prune">잔선 정리 <span class="value" id="pruneVal">40</span></label>
           <input type="range" id="prune" min="0" max="200" step="5" value="40">
           <p class="hint">윤곽에 매달린 잔가지(봉제선·주름·노이즈)를 이 길이(px)까지 지워요. 큰 윤곽과 입·눈썹 같은 독립된 선은 안 건드려요</p>
@@ -94,8 +104,14 @@
           <p class="hint">끄면 선만, 켜면 어두운 부분에 연한 회색 톤을 깔아요</p>
         </div>
 
+        <div class="control-row">
+          <label for="titleInput">제목 <span class="value" style="font-weight:500">선택</span></label>
+          <input type="text" id="titleInput" class="text-input" maxlength="30" placeholder="예: 피카츄 (인쇄할 때 아래에 찍혀요)">
+        </div>
+
         <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>
-        <button class="btn-primary" id="downloadBtn" type="button">🖨️ PNG로 다운로드</button>
+        <button class="btn-primary" id="printBtn" type="button">🖨️ 인쇄 / PDF 저장</button>
+        <button class="btn-secondary" id="downloadBtn" type="button">PNG로 다운로드</button>
         <button class="btn-ghost" id="newImageBtn" type="button">다른 이미지 선택</button>
       </section>
     </aside>
@@ -134,6 +150,13 @@
   <footer class="footer">
     <p>모든 변환은 이 브라우저 안에서만 일어나요. 새로고침하면 결과는 사라지니 필요하면 먼저 다운로드하세요.</p>
   </footer>
+</div>
+
+<!-- 인쇄 전용 레이아웃: A4 한 장에 결과물 크게 + 원본 우측 하단 작게 + 제목. 화면에선 안 보임 -->
+<div class="print-sheet" id="printSheet" aria-hidden="true">
+  <img class="print-result" id="printResult" alt="">
+  <img class="print-original" id="printOriginal" alt="">
+  <p class="print-title" id="printTitle"></p>
 </div>
 
 <div class="lightbox" id="lightbox" hidden>

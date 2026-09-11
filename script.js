@@ -139,6 +139,14 @@
   const pruneVal = document.getElementById('pruneVal');
   const modeInputs = document.querySelectorAll('input[name="mode"]');
   const autoHint = document.getElementById('autoHint');
+  const outlineAssist = document.getElementById('outlineAssist');
+  const inkDark = document.getElementById('inkDark');
+  const inkDarkVal = document.getElementById('inkDarkVal');
+  const titleInput = document.getElementById('titleInput');
+  const printBtn = document.getElementById('printBtn');
+  const printResult = document.getElementById('printResult');
+  const printOriginal = document.getElementById('printOriginal');
+  const printTitle = document.getElementById('printTitle');
   const sensitivityVal = document.getElementById('sensitivityVal');
   const thicknessVal = document.getElementById('thicknessVal');
   const denoiseVal = document.getElementById('denoiseVal');
@@ -160,7 +168,7 @@
   // sensitivity 기본값 70: 컬러 그래디언트로 바꾼 뒤 흰 배경 실루엣이 워낙 세게 잡혀서 상위 n%를
   // 독식한다. 50이면 실루엣만 남고 눈·볼·입이 빠지고, 65면 입이 빠지고, 70에서 얼굴이 다 들어온다
   // (피카츄 썸네일 실측). 75부터는 JPEG 링잉이 손·발 근처에 꼬불선으로 나타나기 시작한다.
-  const DEFAULTS = { sensitivity: 70, thickness: 1, denoise: 3, adaptive: 60, shading: false, prune: 40 };
+  const DEFAULTS = { sensitivity: 70, thickness: 1, denoise: 3, adaptive: 60, shading: false, prune: 40, inkDark: 150 };
 
   let sourceImage = null; // HTMLImageElement
   let rendering = false;      // 렌더가 진행 중 (AI 모드는 GPU를 기다리는 동안 입력 이벤트가 계속 들어온다)
@@ -170,6 +178,7 @@
   let bgSessionPromise = null; // 배경 제거 세션
   let bgCache = null;          // { image, canvas } — 원본당 한 번만 배경을 지운다
   let activeSource = null;     // 이번 렌더가 실제로 읽는 소스 (원본 이미지 또는 배경 지운 캔버스)
+  let assistDecidedFor = null; // 윤곽선 보충 자동 판단을 이미 내린 소스 (한 그림에 한 번만)
   const bgRemove = document.getElementById('bgRemove');
 
   // 소스가 <img>든 <canvas>든 같은 방식으로 크기를 읽는다
@@ -208,9 +217,10 @@
   //       렌더 0.63%/71%/56% ✕, 애니 장면 8.9%/3.5%/27% ✕
   function looksLikeInkDrawing(image) {
     const longest = 400;
-    const scale = Math.min(1, longest / Math.max(image.naturalWidth, image.naturalHeight));
-    const w = Math.max(8, Math.round(image.naturalWidth * scale));
-    const h = Math.max(8, Math.round(image.naturalHeight * scale));
+    const { w: iw, h: ih } = sourceSize(image);
+    const scale = Math.min(1, longest / Math.max(iw, ih));
+    const w = Math.max(8, Math.round(iw * scale));
+    const h = Math.max(8, Math.round(ih * scale));
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
@@ -261,14 +271,7 @@
       eraseStrokes = [];
       updateEraserButtons();
       drawOriginal();
-      if (looksLikeInkDrawing(img)) {
-        setMode('ink');
-        autoHint.textContent = '검은 윤곽선이 있는 그림이라 「선화」를 골랐어요. 마음에 안 들면 바꿔도 돼요';
-        autoHint.hidden = false;
-      } else {
-        if (currentMode() === 'ink') setMode('ai'); // 이전 그림 때문에 선화였다면 원래대로
-        autoHint.hidden = true;
-      }
+      assistDecidedFor = null; // 새 그림 → 윤곽선 보충 필요 여부를 다시 판단 (배경 지운 뒤에)
       uploadPrompt.hidden = true;
       uploadThumb.hidden = false;
       controls.hidden = false;
@@ -302,6 +305,7 @@
     [denoise, denoiseVal],
     [adaptive, adaptiveVal],
     [prune, pruneVal],
+    [inkDark, inkDarkVal],
   ].forEach(([input, out]) => {
     input.addEventListener('input', () => {
       out.textContent = input.value;
@@ -311,6 +315,7 @@
 
   shading.addEventListener('change', scheduleRender);
   bgRemove.addEventListener('change', scheduleRender);
+  outlineAssist.addEventListener('change', () => { autoHint.hidden = true; scheduleRender(); });
 
   modeInputs.forEach((input) => {
     input.addEventListener('change', () => {
@@ -327,12 +332,14 @@
     adaptive.value = DEFAULTS.adaptive;
     prune.value = DEFAULTS.prune;
     pruneVal.textContent = DEFAULTS.prune;
+    inkDark.value = DEFAULTS.inkDark;
+    inkDarkVal.textContent = DEFAULTS.inkDark;
     shading.checked = DEFAULTS.shading;
     sensitivityVal.textContent = DEFAULTS.sensitivity;
     thicknessVal.textContent = DEFAULTS.thickness;
     denoiseVal.textContent = DEFAULTS.denoise;
     adaptiveVal.textContent = DEFAULTS.adaptive;
-    setMode('ai');
+    setMode('ink');
     autoHint.hidden = true;
     scheduleRender();
   });
@@ -387,9 +394,18 @@
           rerunRequested = false;
           activeSource = bgRemove.checked ? await getBackgroundRemoved() : sourceImage;
           if (rerunRequested) continue; // 배경 지우는 사이 입력이 바뀜 — 처음부터
+          // 윤곽선 보충 자동 판단은 배경을 지운 뒤에 한다 (숲 배경이 사라지면 흰 비율이 올라가 판단이 정확해짐)
+          if (assistDecidedFor !== activeSource) {
+            assistDecidedFor = activeSource;
+            const hasInk = looksLikeInkDrawing(activeSource);
+            outlineAssist.checked = !hasInk;
+            autoHint.textContent = hasInk
+              ? '검은 윤곽선이 있는 그림이라 그 선을 그대로 써요'
+              : '검은 선이 적은 그림이라 윤곽선을 보충했어요. 마음에 안 들면 꺼도 돼요';
+            autoHint.hidden = false;
+          }
           const mode = currentMode();
-          if (mode === 'ai') await renderAI();
-          else if (mode === 'ink') renderInk();
+          if (mode === 'ink') await renderInk();
           else render();
         }
         processingOverlay.hidden = true;
@@ -504,14 +520,15 @@
     return aiCache;
   }
 
-  async function renderAI() {
+  // 학습된 윤곽 모델로 "몸통 윤곽" 마스크를 만든다 (선화 모드의 윤곽선 보충). 결과는 1px 뼈대 → 굵기 확장.
+  // 반환: { width, height, mask } 또는 null(기다리는 사이 소스가 바뀜)
+  async function outlineMaskFromModel() {
     const { image, width, height, fused } = await getFusedMap();
-    if (image !== activeSource) return; // 기다리는 사이 다른 이미지로 바뀜 — 다음 루프가 처리
+    if (image !== activeSource) return null; // 기다리는 사이 다른 이미지로 바뀜 — 다음 루프가 처리
 
-    // 출력이 확률이라 임계값이 사진마다 흔들리지 않는다(그래디언트처럼 백분위로 잡을 필요 없음).
-    // 0.2~0.5 사이는 거의 같은 그림이고(실측 검은 비율 5.2%→4.1%), 그 밖에서 선이 늘고 준다.
-    const s = parseFloat(sensitivity.value); // 0~115
-    const thr = clamp(0.85 - 0.7 * (s / 100), 0.08, 0.9); // 기본 70 → 0.36
+    // 출력이 확률이라 임계값이 사진마다 흔들리지 않는다. 0.2~0.5 사이는 거의 같은 그림
+    // (실측 검은 비율 5.2%→4.1%). 70 기준으로 고정 — 슬라이더로 바꿔봐야 얻는 게 거의 없었다.
+    const thr = 0.36;
 
     // 하드 임계값 하나면 확률이 오르내리는 약한 선(팔 위쪽 그림자 경계)이 점선으로 끊긴다.
     // 강한 선(thr 이상)에서 출발해 이어지는 약한 선(thr의 55%까지)은 살린다 — 기본 모드와 같은 원리.
@@ -529,15 +546,31 @@
     const thicknessRadius = parseFloat(thickness.value);
     if (thicknessRadius > 0) mask = dilateDisc(mask, width, height, thicknessRadius);
 
-    paintMask(mask, null, width, height);
+    return { width, height, mask };
   }
 
   // ---------- 선화 모드 ----------
   // 검은 윤곽선이 이미 있는 그림: 어두운 픽셀(RGB 최대값 기준, 유채색 어두운 면은 덜 잡히게)을 그대로 선으로.
   // 선의 원래 굵기 변화(붓 터치)를 살리려고 세선화하지 않는다. 눈처럼 검게 칠해진 면도 그대로 검정.
-  function renderInk() {
+  async function renderInk() {
+    // 윤곽선 보충이 켜져 있으면 모델 결과 크기(1024)에 맞춰 선화를 뽑아 합친다
+    let outline = null;
+    if (outlineAssist.checked) {
+      outline = await outlineMaskFromModel();
+      if (!outline) return;
+    }
+    const size = outline ? { width: outline.width, height: outline.height } : null;
+    const { width, height, mask } = inkMask(size);
+    if (outline) {
+      for (let i = 0; i < mask.length; i++) if (outline.mask[i]) mask[i] = 1;
+    }
+    paintMask(mask, null, width, height);
+  }
+
+  // 검은 선·검은 면 마스크. target을 주면 그 크기로, 없으면 기본 크기(긴 변 1200)로.
+  function inkMask(target) {
     const { w: sw, h: sh } = sourceSize(activeSource);
-    const { width, height } = fitSize(sw, sh);
+    const { width, height } = target || fitSize(sw, sh);
     const src = document.createElement('canvas');
     src.width = width;
     src.height = height;
@@ -550,14 +583,20 @@
     let bright = new Float32Array(n); // RGB 최대값 = "얼마나 안 어두운가"
     for (let i = 0, p = 0; i < d.length; i += 4, p++) bright[p] = Math.max(d[i], d[i + 1], d[i + 2]);
 
-    // 단순화 = JPEG 얼룩·잔 점을 뭉개는 살짝 흐림 (기본 3 → 반경 1.5). 크게 올리면 가는 선이 사라진다
-    const radius = Math.max(0.5, parseFloat(denoise.value)) * 0.5;
+    // 단순화 = JPEG 얼룩·잔 점을 뭉개는 살짝 흐림 (기본 3 → 반경 0.75). 반경 1.5로 했더니 가는 선이
+    // 옅어져 기준 아래로 내려가 점선이 됐다(실측). 크게 올리면 가는 선이 사라진다
+    const radius = Math.max(0.5, parseFloat(denoise.value)) * 0.25;
     bright = blurFractional(bright, width, height, radius);
 
-    // 선 개수 = 얼마나 어두워야 선으로 볼지. 0→40, 70(기본)→110, 115→155
-    const thr = 40 + parseFloat(sensitivity.value);
+    // 어두움 기준 = 얼마나 어두워야 선으로 볼지 (기본 150). 작은 원본을 키우면 안티앨리어싱 때문에
+    // 선 픽셀의 최대값이 120~150까지 올라가서 110으로는 점선이 됐다(실측). 회색 그림자가 딸려오면 내릴 것
+    const thr = parseFloat(inkDark.value);
     let mask = new Uint8Array(n);
     for (let i = 0; i < n; i++) mask[i] = bright[i] < thr ? 1 : 0;
+
+    // 가장자리 다듬기: 닫기(팽창→침식)로 JPEG 때문에 생긴 핀홀·1px 끊김을 메운다. 반경 1이라 선 굵기는 그대로.
+    // 열기(침식→팽창)도 넣어봤는데 1~2px 가는 선을 통째로 지워서 뺐다.
+    mask = closeMask(mask, width, height, 1);
 
     removeSpecks(mask, width, height, 4 + radius * 8);
 
@@ -572,8 +611,40 @@
       for (let i = 0; i < n; i++) mask[i] = grown[i] ? 0 : 1;
     }
 
-    paintMask(mask, null, width, height);
+    return { width, height, mask };
   }
+
+  function erodeMask(mask, width, height, radius) {
+    const n = width * height;
+    const inv = new Uint8Array(n);
+    for (let i = 0; i < n; i++) inv[i] = mask[i] ? 0 : 1;
+    const grown = dilateDisc(inv, width, height, radius);
+    const out = new Uint8Array(n);
+    for (let i = 0; i < n; i++) out[i] = grown[i] ? 0 : 1;
+    return out;
+  }
+  function closeMask(mask, width, height, radius) {
+    return erodeMask(dilateDisc(mask, width, height, radius), width, height, radius);
+  }
+
+  // ---------- 인쇄 ----------
+  // 브라우저 인쇄로 A4 한 장: 결과물 크게, 원본 우측 하단 작게, 제목 하단 중앙. PDF 저장도 인쇄 대화상자에서.
+  function preparePrintSheet() {
+    if (!lastPaint) return false;
+    printResult.src = resultCanvas.toDataURL('image/png');
+    printOriginal.src = originalCanvas.width ? originalCanvas.toDataURL('image/png') : '';
+    printTitle.textContent = titleInput.value.trim();
+    return true;
+  }
+  printBtn.addEventListener('click', () => {
+    if (!preparePrintSheet()) return;
+    window.print();
+  });
+  window.addEventListener('beforeprint', preparePrintSheet); // Ctrl+P로 눌러도 같은 레이아웃
+  window.addEventListener('afterprint', () => {
+    printResult.removeAttribute('src'); // 큰 data URL을 붙들고 있지 않도록
+    printOriginal.removeAttribute('src');
+  });
 
   // 마스크(1=선) + 음영 마스크(1=연한 회색)를 결과 캔버스에 그린다.
   function paintMask(mask, shadeMask, width, height) {
