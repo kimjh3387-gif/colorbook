@@ -157,21 +157,16 @@ body {
 .control-row-checkbox { border-top: 1px solid var(--border); padding-top: 14px; }
 .control-row-first { border-top: none; padding-top: 0; }
 
-/* 변환 방식에 따라 관계있는 조절만 보여준다: data-mode에 자기 모드가 안 적힌 요소는 숨김 (공백 구분 목록) */
-.controls[data-mode="ai"] [data-mode]:not([data-mode~="ai"]),
-.controls[data-mode="ink"] [data-mode]:not([data-mode~="ink"]),
-.controls[data-mode="basic"] [data-mode]:not([data-mode~="basic"]) { display: none; }
-.auto-hint { color: var(--accent); }
-
-.row-title { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-.segmented {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg);
+.sub-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 10px 0 6px;
+  color: var(--text-muted);
 }
+.control-row-checkbox input[type="range"] { width: 100%; accent-color: var(--accent); }
+
 .text-input {
   width: 100%;
   padding: 8px 10px;
@@ -217,7 +212,7 @@ body {
     border-radius: 2mm;
     background: #fff;
   }
-  .print-original[src=""] { display: none; }
+  .print-original:not([src]), .print-original[src=""] { display: none; }
   .print-title {
     position: absolute;
     left: 0;
@@ -231,19 +226,7 @@ body {
     color: #222;
   }
 }
-.segmented label { cursor: pointer; }
-.segmented input { position: absolute; opacity: 0; pointer-events: none; }
-.segmented span {
-  display: block;
-  text-align: center;
-  padding: 8px 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-.segmented small { font-weight: 500; font-size: 11px; opacity: 0.8; }
-.segmented input:checked + span { background: var(--accent); color: #fff; }
-.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 .checkbox-label {
   display: flex;
   align-items: center;
