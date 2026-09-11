@@ -183,24 +183,26 @@ body {
 .print-sheet { display: none; }
 
 @media print {
-  @page { size: A4 portrait; margin: 12mm; }
+  /* 용지 방향은 JS가 #printPageStyle 에 @page { size: A4 portrait|landscape } 로 넣는다 (그림 모양 자동 / 사용자 선택) */
+  @page { margin: 12mm; }
   body { background: #fff; }
   .app, .lightbox { display: none !important; }
   .print-sheet {
     display: block;
     position: relative;
-    width: 186mm;   /* A4 210 - 여백 24 */
-    height: 273mm;  /* A4 297 - 여백 24 */
     overflow: hidden;
     page-break-after: avoid;
   }
+  .print-sheet.portrait { width: 186mm; height: 273mm; }   /* A4 210×297 − 여백 24 */
+  .print-sheet.landscape { width: 273mm; height: 186mm; }
   .print-result {
     display: block;
     width: 100%;
-    height: 245mm;
+    height: calc(100% - 16mm); /* 아래 제목 자리 */
     object-fit: contain;
     object-position: center top;
   }
+  .print-sheet.no-title .print-result { height: 100%; }
   .print-original {
     position: absolute;
     right: 0;
@@ -212,12 +214,13 @@ body {
     border-radius: 2mm;
     background: #fff;
   }
+  .print-sheet.landscape .print-original { width: 32mm; height: 32mm; }
   .print-original:not([src]), .print-original[src=""] { display: none; }
   .print-title {
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 4mm;
+    bottom: 3mm;
     margin: 0;
     text-align: center;
     font-size: 26pt;
@@ -225,6 +228,7 @@ body {
     letter-spacing: 0.05em;
     color: #222;
   }
+  .print-sheet.landscape .print-title { font-size: 22pt; }
 }
 
 .checkbox-label {

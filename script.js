@@ -55,6 +55,9 @@
   const printResult = document.getElementById('printResult');
   const printOriginal = document.getElementById('printOriginal');
   const printTitle = document.getElementById('printTitle');
+  const printSheet = document.getElementById('printSheet');
+  const printOrient = document.getElementById('printOrient');
+  const printPageStyle = document.getElementById('printPageStyle');
 
   const eraserBtn = document.getElementById('eraserBtn');
   const eraserSizeWrap = document.getElementById('eraserSizeWrap');
@@ -488,11 +491,21 @@
   // 함정: src를 넣자마자 print()를 부르면 data URL 디코딩이 안 끝나서 미리보기가 빈 종이로 나온다(실측).
   // 그래서 (1) 결과가 그려질 때마다 인쇄용 이미지를 미리 채워두고, (2) 버튼은 decode()를 기다린 뒤 인쇄한다.
   let printPrepTimer = null;
+  // 용지 방향: 자동이면 그림이 가로로 길 때 가로. CSS에 방향을 고정하면 브라우저 인쇄창의 레이아웃 옵션이
+  // 잠기고 가로 그림이 세로 용지에 작게 찍혔다(실측) → @page 규칙을 매번 JS로 넣는다.
+  function applyPrintLayout() {
+    let orient = printOrient.value;
+    if (orient === 'auto') orient = resultCanvas.width > resultCanvas.height ? 'landscape' : 'portrait';
+    const title = titleInput.value.trim();
+    printSheet.className = 'print-sheet ' + orient + (title ? '' : ' no-title');
+    printPageStyle.textContent = '@media print { @page { size: A4 ' + orient + '; } }';
+    printTitle.textContent = title;
+  }
   function updatePrintImages() {
     if (!lastPaint) return Promise.resolve();
+    applyPrintLayout();
     printResult.src = resultCanvas.toDataURL('image/png');
     printOriginal.src = originalCanvas.width ? originalCanvas.toDataURL('image/png') : '';
-    printTitle.textContent = titleInput.value.trim();
     const waits = [printResult.decode().catch(() => {})];
     if (printOriginal.getAttribute('src')) waits.push(printOriginal.decode().catch(() => {}));
     return Promise.all(waits);
@@ -506,7 +519,8 @@
     await updatePrintImages();
     window.print();
   });
-  titleInput.addEventListener('input', () => { printTitle.textContent = titleInput.value.trim(); });
+  titleInput.addEventListener('input', applyPrintLayout);
+  printOrient.addEventListener('change', applyPrintLayout);
   // Ctrl+P: 미리 채워둔 이미지를 쓴다 (여기서 await는 못 하므로 최선의 노력)
   window.addEventListener('beforeprint', () => { if (!printResult.getAttribute('src')) updatePrintImages(); });
 

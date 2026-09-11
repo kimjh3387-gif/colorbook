@@ -88,6 +88,12 @@
         <div class="control-row">
           <label for="titleInput">제목 <span class="value" style="font-weight:500">선택</span></label>
           <input type="text" id="titleInput" class="text-input" maxlength="30" placeholder="예: 피카츄 (인쇄할 때 아래에 찍혀요)">
+          <label for="printOrient" class="sub-label">인쇄 방향</label>
+          <select id="printOrient" class="text-input">
+            <option value="auto" selected>자동 (그림 모양에 맞춰)</option>
+            <option value="portrait">세로</option>
+            <option value="landscape">가로</option>
+          </select>
         </div>
 
         <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>
@@ -134,7 +140,8 @@
 </div>
 
 <!-- 인쇄 전용 레이아웃: A4 한 장에 결과물 크게 + 원본 우측 하단 작게 + 제목. 화면에선 안 보임 -->
-<div class="print-sheet" id="printSheet" aria-hidden="true">
+<style id="printPageStyle"></style>
+<div class="print-sheet portrait" id="printSheet" aria-hidden="true">
   <img class="print-result" id="printResult" alt="">
   <img class="print-original" id="printOriginal" alt="">
   <p class="print-title" id="printTitle"></p>
