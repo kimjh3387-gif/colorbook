@@ -155,10 +155,13 @@ body {
 }
 
 .control-row-checkbox { border-top: 1px solid var(--border); padding-top: 14px; }
+.control-row-first { border-top: none; padding-top: 0; }
 
-/* 변환 방식에 따라 관계있는 조절만 보여준다 */
-.controls[data-mode="ai"] [data-mode="basic"],
-.controls[data-mode="basic"] [data-mode="ai"] { display: none; }
+/* 변환 방식에 따라 관계있는 조절만 보여준다: data-mode에 자기 모드가 안 적힌 요소는 숨김 (공백 구분 목록) */
+.controls[data-mode="ai"] [data-mode]:not([data-mode~="ai"]),
+.controls[data-mode="ink"] [data-mode]:not([data-mode~="ink"]),
+.controls[data-mode="basic"] [data-mode]:not([data-mode~="basic"]) { display: none; }
+.auto-hint { color: var(--accent); }
 
 .row-title { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .segmented {
@@ -169,6 +172,7 @@ body {
   overflow: hidden;
   background: var(--bg);
 }
+.segmented-3 { grid-template-columns: 1fr 1fr 1fr; }
 .segmented label { cursor: pointer; }
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span {

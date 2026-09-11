@@ -15,6 +15,90 @@
   const AI_MODEL_URL = 'models/pidinet_tiny.onnx';
   const ORT_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js';
   const AI_OUTPUT_DIMENSION = 1024; // 결과 PNG 긴 변 (추론 해상도와 무관하게 고정)
+  function getBackgroundSession() {
+    if (bgSessionPromise) return bgSessionPromise;
+    bgSessionPromise = (async () => {
+      await loadScript(ORT_SCRIPT_URL);
+      return ort.InferenceSession.create(BG_MODEL_URL, { executionProviders: ['webgpu', 'wasm'] });
+    })();
+    bgSessionPromise.catch(() => { bgSessionPromise = null; });
+    return bgSessionPromise;
+  }
+
+  // 원본 → 배경을 흰색으로 밀어낸 캔버스(원본 크기). 원본당 한 번만 계산.
+  async function getBackgroundRemoved() {
+    if (bgCache && bgCache.image === sourceImage) return bgCache.canvas;
+    const image = sourceImage;
+
+    if (!bgSessionPromise) processingOverlay.textContent = '배경 분리 모델 준비 중… (처음 한 번만)';
+    const session = await getBackgroundSession();
+    processingOverlay.textContent = '배경 지우는 중…';
+
+    // 320×320 입력 (비율 무시하고 늘림 — 모델 학습 방식과 같고, 마스크를 다시 원본 비율로 늘리면 맞는다)
+    const c = document.createElement('canvas');
+    c.width = BG_INPUT;
+    c.height = BG_INPUT;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, 0, 0, BG_INPUT, BG_INPUT);
+    const d = ctx.getImageData(0, 0, BG_INPUT, BG_INPUT).data;
+    const n = BG_INPUT * BG_INPUT;
+    const x = new Float32Array(3 * n);
+    for (let i = 0; i < n; i++) {
+      for (let ch = 0; ch < 3; ch++) {
+        x[ch * n + i] = (d[i * 4 + ch] / 255 - AI_MEAN[ch]) / AI_STD[ch];
+      }
+    }
+    const out = await session.run({ 'input.1': new ort.Tensor('float32', x, [1, 3, BG_INPUT, BG_INPUT]) });
+    const raw = out[session.outputNames[0]].data; // 첫 출력(d0)이 최종 마스크
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) { if (raw[i] < lo) lo = raw[i]; if (raw[i] > hi) hi = raw[i]; }
+    const span = hi - lo || 1;
+
+    // 마스크를 회색 이미지로 만들어 원본 크기로 부드럽게 키운 뒤 알파로 쓴다.
+    // 0.15~0.85 구간을 0~1로 펴서(그 밖은 확실히 배경/피사체) 경계가 뿌옇게 남지 않게 한다.
+    const mc = document.createElement('canvas');
+    mc.width = BG_INPUT;
+    mc.height = BG_INPUT;
+    const mctx = mc.getContext('2d');
+    const mimg = mctx.createImageData(BG_INPUT, BG_INPUT);
+    for (let i = 0; i < n; i++) {
+      let m = (raw[i] - lo) / span;
+      m = clamp((m - 0.15) / 0.7, 0, 1);
+      const v = Math.round(m * 255);
+      mimg.data[i * 4] = v; mimg.data[i * 4 + 1] = v; mimg.data[i * 4 + 2] = v; mimg.data[i * 4 + 3] = 255;
+    }
+    mctx.putImageData(mimg, 0, 0);
+
+    const W = image.naturalWidth;
+    const H = image.naturalHeight;
+    const big = document.createElement('canvas');
+    big.width = W;
+    big.height = H;
+    const bctx = big.getContext('2d', { willReadFrequently: true });
+    bctx.imageSmoothingQuality = 'high';
+    bctx.drawImage(mc, 0, 0, W, H);
+    const mask = bctx.getImageData(0, 0, W, H).data;
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = W;
+    outCanvas.height = H;
+    const octx = outCanvas.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(image, 0, 0);
+    const img = octx.getImageData(0, 0, W, H);
+    const p = img.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const a = mask[i] / 255;
+      p[i] = Math.round(p[i] * a + 255 * (1 - a));
+      p[i + 1] = Math.round(p[i + 1] * a + 255 * (1 - a));
+      p[i + 2] = Math.round(p[i + 2] * a + 255 * (1 - a));
+    }
+    octx.putImageData(img, 0, 0);
+
+    bgCache = { image, canvas: outCanvas };
+    return outCanvas;
+  }
+
   // 추론 해상도 = AI 모드의 "단순화". 모델에 작은 그림을 주면 작은 주름은 안 보이고 큰 윤곽만 잡는다.
   // 실측: 인형 사진은 1024에서 봉제선·털 주름을 전부 선으로 잡았고 512~768에서 얼굴은 그대로 두고
   // 몸통 잔선만 빠졌다. 렌더 피카츄는 768이 1024보다 팔 위쪽이 더 잘 이어졌다(1024는 점선).
@@ -23,6 +107,14 @@
   const AI_MIN_DIMENSION = 256;
   const AI_MEAN = [0.485, 0.456, 0.406]; // ImageNet 정규화 (모델 학습 조건)
   const AI_STD = [0.229, 0.224, 0.225];
+
+  // ---------- 배경 제거 (U²-Net-p) ----------
+  // 숲 배경 애니 장면처럼 배경이 있으면 어떤 모드든 배경 텍스처가 선으로 딸려온다. 그래서 변환 전에
+  // 주요 피사체만 남기고 배경을 흰색으로 밀어낸다. U²-Net-p(4.6MB, Apache-2.0 → 광고 붙여도 됨)를
+  // 320×320으로 돌려 마스크를 얻고 원본 크기로 키워 합성. 실측 CPU 150~190ms.
+  // 한계: 경량 모델이라 "주인공 하나" 위주 — 옆에 있는 두 번째 캐릭터는 같이 지워질 수 있다.
+  const BG_MODEL_URL = 'models/u2netp.onnx';
+  const BG_INPUT = 320;
 
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
@@ -46,6 +138,7 @@
   const prune = document.getElementById('prune');
   const pruneVal = document.getElementById('pruneVal');
   const modeInputs = document.querySelectorAll('input[name="mode"]');
+  const autoHint = document.getElementById('autoHint');
   const sensitivityVal = document.getElementById('sensitivityVal');
   const thicknessVal = document.getElementById('thicknessVal');
   const denoiseVal = document.getElementById('denoiseVal');
@@ -74,6 +167,17 @@
   let rerunRequested = false; // 진행 중에 슬라이더가 움직였으면 끝나고 한 번 더
   let aiSessionPromise = null; // onnxruntime 세션 (한 번만 만든다)
   let aiCache = null;          // { image, width, height, fused } — 슬라이더만 바꿀 땐 모델을 다시 안 돌린다
+  let bgSessionPromise = null; // 배경 제거 세션
+  let bgCache = null;          // { image, canvas } — 원본당 한 번만 배경을 지운다
+  let activeSource = null;     // 이번 렌더가 실제로 읽는 소스 (원본 이미지 또는 배경 지운 캔버스)
+  const bgRemove = document.getElementById('bgRemove');
+
+  // 소스가 <img>든 <canvas>든 같은 방식으로 크기를 읽는다
+  function sourceSize(src) {
+    return src instanceof HTMLCanvasElement
+      ? { w: src.width, h: src.height }
+      : { w: src.naturalWidth, h: src.naturalHeight };
+  }
 
   // ---------- 지우개 상태 ----------
   // 알고리즘이 못 가리는 선(인형 봉제선 등)은 사람이 지운다. 지운 자국은 캔버스 크기에 대한 비율 좌표로
@@ -86,6 +190,49 @@
 
   function currentMode() {
     return document.querySelector('input[name="mode"]:checked').value;
+  }
+
+  function setMode(mode) {
+    modeInputs.forEach((input) => { input.checked = input.value === mode; });
+    controls.dataset.mode = mode;
+  }
+
+  // ---------- 그림 종류 자동 감지 ----------
+  // 검은 윤곽선이 이미 그려진 만화·일러스트는 엣지 검출(선이 두 줄로 갈라짐)도 AI(작은 선이 뭉개짐)도
+  // 손해고, 검은 픽셀을 그대로 뽑는 '선화' 모드가 정답이다. 판별은 세 가지 (400px로 줄여서 측정):
+  //   1) 어두운 픽셀(RGB 최대값 < 70) 비율 ≥ 1%
+  //   2) 흰 배경(RGB 최소값 > 235) 비율 ≥ 25%  — 숲 배경 애니 장면(3.5%)을 걸러냄
+  //   3) 어두운 픽셀이 "면"이 아니라 "선"일 것: 반지름 (긴 변/150)로 침식하면 75% 넘게 사라져야 함
+  //      — 귀 끝이 검게 칠해진 인형/렌더(61%·56% 남음)를 걸러냄
+  // 실측: 일러스트 1.55%/52.7%/8.6% ○, 카드 격자 1.13%/42%/13% ○, 인형 1.56%/65%/61% ✕,
+  //       렌더 0.63%/71%/56% ✕, 애니 장면 8.9%/3.5%/27% ✕
+  function looksLikeInkDrawing(image) {
+    const longest = 400;
+    const scale = Math.min(1, longest / Math.max(image.naturalWidth, image.naturalHeight));
+    const w = Math.max(8, Math.round(image.naturalWidth * scale));
+    const h = Math.max(8, Math.round(image.naturalHeight * scale));
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(image, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const dark = new Uint8Array(w * h);
+    let darkCount = 0;
+    let whiteCount = 0;
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      if (Math.max(d[i], d[i + 1], d[i + 2]) < 70) { dark[p] = 1; darkCount++; }
+      if (Math.min(d[i], d[i + 1], d[i + 2]) > 235) whiteCount++;
+    }
+    if (darkCount / (w * h) < 0.01) return false;
+    if (whiteCount / (w * h) < 0.25) return false;
+    // 침식 = 반전 → 팽창 → 반전
+    const inv = new Uint8Array(w * h);
+    for (let i = 0; i < inv.length; i++) inv[i] = dark[i] ? 0 : 1;
+    const grown = dilateDisc(inv, w, h, Math.max(2, Math.round(Math.max(w, h) / 150)));
+    let remain = 0;
+    for (let i = 0; i < grown.length; i++) if (dark[i] && !grown[i]) remain++;
+    return remain / darkCount <= 0.25;
   }
 
   // ---------- 업로드 ----------
@@ -114,6 +261,14 @@
       eraseStrokes = [];
       updateEraserButtons();
       drawOriginal();
+      if (looksLikeInkDrawing(img)) {
+        setMode('ink');
+        autoHint.textContent = '검은 윤곽선이 있는 그림이라 「선화」를 골랐어요. 마음에 안 들면 바꿔도 돼요';
+        autoHint.hidden = false;
+      } else {
+        if (currentMode() === 'ink') setMode('ai'); // 이전 그림 때문에 선화였다면 원래대로
+        autoHint.hidden = true;
+      }
       uploadPrompt.hidden = true;
       uploadThumb.hidden = false;
       controls.hidden = false;
@@ -155,10 +310,12 @@
   });
 
   shading.addEventListener('change', scheduleRender);
+  bgRemove.addEventListener('change', scheduleRender);
 
   modeInputs.forEach((input) => {
     input.addEventListener('change', () => {
       controls.dataset.mode = currentMode();
+      autoHint.hidden = true;
       scheduleRender();
     });
   });
@@ -175,8 +332,8 @@
     thicknessVal.textContent = DEFAULTS.thickness;
     denoiseVal.textContent = DEFAULTS.denoise;
     adaptiveVal.textContent = DEFAULTS.adaptive;
-    modeInputs.forEach((input) => { input.checked = input.value === 'ai'; });
-    controls.dataset.mode = 'ai';
+    setMode('ai');
+    autoHint.hidden = true;
     scheduleRender();
   });
 
@@ -228,7 +385,11 @@
       try {
         while (rerunRequested) {
           rerunRequested = false;
-          if (currentMode() === 'ai') await renderAI();
+          activeSource = bgRemove.checked ? await getBackgroundRemoved() : sourceImage;
+          if (rerunRequested) continue; // 배경 지우는 사이 입력이 바뀜 — 처음부터
+          const mode = currentMode();
+          if (mode === 'ai') await renderAI();
+          else if (mode === 'ink') renderInk();
           else render();
         }
         processingOverlay.hidden = true;
@@ -309,14 +470,15 @@
   // 모델 출력(픽셀별 "여기가 윤곽일 확률" 0~1)을 (이미지, 추론 해상도)당 한 번만 계산해 캐시한다.
   async function getFusedMap() {
     const inferDim = aiInferenceDimension();
-    if (aiCache && aiCache.image === sourceImage && aiCache.inferDim === inferDim) return aiCache;
-    const image = sourceImage;
+    if (aiCache && aiCache.image === activeSource && aiCache.inferDim === inferDim) return aiCache;
+    const image = activeSource;
 
     if (!aiSessionPromise) processingOverlay.textContent = 'AI 모델 준비 중… (처음 한 번만)';
     const session = await getAISession();
     processingOverlay.textContent = 'AI가 윤곽을 찾는 중…';
 
-    const { width, height } = fitSizeAI(image.naturalWidth, image.naturalHeight, inferDim);
+    const { w: sw, h: sh } = sourceSize(image);
+    const { width, height } = fitSizeAI(sw, sh, inferDim);
     const c = document.createElement('canvas');
     c.width = width;
     c.height = height;
@@ -335,7 +497,7 @@
     const out = await session.run({ image: new ort.Tensor('float32', x, [1, 3, height, width]) });
     const raw = Float32Array.from(out.fused.data, (v) => (v < 0 ? 0 : v > 1 ? 1 : v));
 
-    const outSize = fitSizeAI(image.naturalWidth, image.naturalHeight, AI_OUTPUT_DIMENSION);
+    const outSize = fitSizeAI(sw, sh, AI_OUTPUT_DIMENSION);
     const fused = upscaleMap(raw, width, height, outSize.width, outSize.height);
 
     aiCache = { image, inferDim, width: outSize.width, height: outSize.height, fused };
@@ -344,7 +506,7 @@
 
   async function renderAI() {
     const { image, width, height, fused } = await getFusedMap();
-    if (image !== sourceImage) return; // 기다리는 사이 다른 이미지로 바뀜 — 다음 루프가 처리
+    if (image !== activeSource) return; // 기다리는 사이 다른 이미지로 바뀜 — 다음 루프가 처리
 
     // 출력이 확률이라 임계값이 사진마다 흔들리지 않는다(그래디언트처럼 백분위로 잡을 필요 없음).
     // 0.2~0.5 사이는 거의 같은 그림이고(실측 검은 비율 5.2%→4.1%), 그 밖에서 선이 늘고 준다.
@@ -366,6 +528,49 @@
     pruneSpurs(mask, width, height, parseFloat(prune.value));
     const thicknessRadius = parseFloat(thickness.value);
     if (thicknessRadius > 0) mask = dilateDisc(mask, width, height, thicknessRadius);
+
+    paintMask(mask, null, width, height);
+  }
+
+  // ---------- 선화 모드 ----------
+  // 검은 윤곽선이 이미 있는 그림: 어두운 픽셀(RGB 최대값 기준, 유채색 어두운 면은 덜 잡히게)을 그대로 선으로.
+  // 선의 원래 굵기 변화(붓 터치)를 살리려고 세선화하지 않는다. 눈처럼 검게 칠해진 면도 그대로 검정.
+  function renderInk() {
+    const { w: sw, h: sh } = sourceSize(activeSource);
+    const { width, height } = fitSize(sw, sh);
+    const src = document.createElement('canvas');
+    src.width = width;
+    src.height = height;
+    const sctx = src.getContext('2d', { willReadFrequently: true });
+    sctx.imageSmoothingQuality = 'high';
+    sctx.drawImage(activeSource, 0, 0, width, height);
+    const d = sctx.getImageData(0, 0, width, height).data;
+
+    const n = width * height;
+    let bright = new Float32Array(n); // RGB 최대값 = "얼마나 안 어두운가"
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) bright[p] = Math.max(d[i], d[i + 1], d[i + 2]);
+
+    // 단순화 = JPEG 얼룩·잔 점을 뭉개는 살짝 흐림 (기본 3 → 반경 1.5). 크게 올리면 가는 선이 사라진다
+    const radius = Math.max(0.5, parseFloat(denoise.value)) * 0.5;
+    bright = blurFractional(bright, width, height, radius);
+
+    // 선 개수 = 얼마나 어두워야 선으로 볼지. 0→40, 70(기본)→110, 115→155
+    const thr = 40 + parseFloat(sensitivity.value);
+    let mask = new Uint8Array(n);
+    for (let i = 0; i < n; i++) mask[i] = bright[i] < thr ? 1 : 0;
+
+    removeSpecks(mask, width, height, 4 + radius * 8);
+
+    // 굵기 1 = 원본 그대로. 크면 그만큼 팽창, 작으면(0~0.5) 그만큼 침식(반전→팽창→반전)
+    const t = parseFloat(thickness.value);
+    if (t > 1) {
+      mask = dilateDisc(mask, width, height, t - 1);
+    } else if (t < 1) {
+      const inv = new Uint8Array(n);
+      for (let i = 0; i < n; i++) inv[i] = mask[i] ? 0 : 1;
+      const grown = dilateDisc(inv, width, height, (1 - t) * 2);
+      for (let i = 0; i < n; i++) mask[i] = grown[i] ? 0 : 1;
+    }
 
     paintMask(mask, null, width, height);
   }
@@ -554,14 +759,15 @@
   //   5) 그래도 남은 작은 얼룩은 덩어리 크기로 제거한 뒤
   //   6) 원하는 굵기로 두껍게 만든다.
   function render() {
-    const { width, height } = fitSize(sourceImage.naturalWidth, sourceImage.naturalHeight);
+    const { w: sw, h: sh } = sourceSize(activeSource);
+    const { width, height } = fitSize(sw, sh);
 
     const src = document.createElement('canvas');
     src.width = width;
     src.height = height;
     const sctx = src.getContext('2d', { willReadFrequently: true });
     sctx.imageSmoothingQuality = 'high'; // 확대 시 계단 현상 대신 부드러운 경사로 → 엣지 검출이 깔끔
-    sctx.drawImage(sourceImage, 0, 0, width, height);
+    sctx.drawImage(activeSource, 0, 0, width, height);
     const imageData = sctx.getImageData(0, 0, width, height);
 
     // 흑백(휘도)만 보면 캐릭터 그림에서 중요한 경계가 통째로 사라진다:
@@ -652,6 +858,7 @@
   // 페이지가 뜨자마자 AI 라이브러리+모델을 미리 받아둔다 (0.4MB 모델 + 런타임). 실패해도 조용히 —
   // 실제 변환 때 다시 시도하고 그때 에러를 보여준다.
   getAISession().catch(() => {});
+  getBackgroundSession().catch(() => {});
 
   function toGrayscale(imageData) {
     const { data, width, height } = imageData;

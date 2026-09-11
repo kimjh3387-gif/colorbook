@@ -41,13 +41,23 @@
       </section>
 
       <section class="controls" id="controls" hidden data-mode="ai">
+        <div class="control-row control-row-checkbox control-row-first">
+          <label class="checkbox-label" for="bgRemove">
+            <input type="checkbox" id="bgRemove" checked>
+            배경 지우기
+          </label>
+          <p class="hint">캐릭터만 남기고 뒤 배경을 흰색으로 밀어요 (브라우저 안에서 도는 분리 모델). 배경이 이미 흰색이면 켜도 그대로예요</p>
+        </div>
         <div class="control-row">
           <span class="row-title">변환 방식</span>
-          <div class="segmented" role="radiogroup" aria-label="변환 방식">
-            <label><input type="radio" name="mode" value="ai" checked><span>AI 윤곽 <small>추천</small></span></label>
+          <div class="segmented segmented-3" role="radiogroup" aria-label="변환 방식">
+            <label><input type="radio" name="mode" value="ai" checked><span>AI 윤곽</span></label>
+            <label><input type="radio" name="mode" value="ink"><span>선화</span></label>
             <label><input type="radio" name="mode" value="basic"><span>기본</span></label>
           </div>
-          <p class="hint" data-mode="ai">사람이 그린 윤곽으로 학습한 모델이 그림자만 다른 경계(팔·주름)까지 찾아요. 이것도 브라우저 안에서만 돌아요</p>
+          <p class="hint auto-hint" id="autoHint" hidden></p>
+          <p class="hint" data-mode="ai">사진·3D 렌더링용. 사람이 그린 윤곽으로 학습한 모델이 그림자만 다른 경계(팔·주름)까지 찾아요. 이것도 브라우저 안에서만 돌아요</p>
+          <p class="hint" data-mode="ink">검은 윤곽선이 이미 그려진 만화·일러스트용. 그 선을 그대로 뽑아요 (엣지 검출·AI보다 정확)</p>
           <p class="hint" data-mode="basic">색이 바뀌는 곳을 수학적으로 찾는 방식. 아래 세부 조절이 많아요</p>
         </div>
         <div class="control-row">
@@ -60,7 +70,7 @@
           <input type="range" id="sensitivity" min="0" max="115" step="0.5" value="70">
           <p class="hint">높일수록 선을 더 많이 남겨요 (100 넘어가면 아주 촘촘해져요)</p>
         </div>
-        <div class="control-row">
+        <div class="control-row" data-mode="ai basic">
           <label for="prune">잔선 정리 <span class="value" id="pruneVal">40</span></label>
           <input type="range" id="prune" min="0" max="200" step="5" value="40">
           <p class="hint">윤곽에 매달린 잔가지(봉제선·주름·노이즈)를 이 길이(px)까지 지워요. 큰 윤곽과 입·눈썹 같은 독립된 선은 안 건드려요</p>
