@@ -45,55 +45,54 @@
           <label class="checkbox-label" for="bgRemove">
             <input type="checkbox" id="bgRemove" checked>
             배경 지우기
+            <span class="help" tabindex="0" data-tip="캐릭터만 남기고 뒤 배경을 흰색으로 밀어요 (브라우저 안에서 도는 분리 모델). 배경이 이미 흰색이면 켜도 그대로예요">?</span>
           </label>
-          <p class="hint">캐릭터만 남기고 뒤 배경을 흰색으로 밀어요 (브라우저 안에서 도는 분리 모델). 배경이 이미 흰색이면 켜도 그대로예요</p>
         </div>
 
         <div class="control-row">
-          <label for="inkDark">어두움 기준 <span class="value" id="inkDarkVal">150</span></label>
-          <input type="range" id="inkDark" min="30" max="200" step="5" value="150">
-          <p class="hint">이보다 어두운 픽셀을 선·면으로 봐요. 낮추면 진짜 검은 선만, 높이면 회색 그림자까지 검게</p>
+          <label for="inkDark"><span>어두움 기준 <span class="help" tabindex="0" data-tip="이보다 어두운 픽셀을 선·면으로 봐요. 낮추면 진짜 검은 선만, 높이면 회색 그림자까지 검게">?</span></span><span class="value" id="inkDarkVal">150</span></label>
+          <input type="range" id="inkDark" min="20" max="230" step="1" value="150">
         </div>
 
         <div class="control-row control-row-checkbox">
           <label class="checkbox-label" for="silhouette">
             <input type="checkbox" id="silhouette" checked>
             실루엣 선
+            <span class="help" tabindex="0" data-tip="캐릭터 바깥 테두리를 선으로 그려요. 검은 윤곽선이 없는 인형·사진의 몸통 윤곽용. 이미 검은 선이 있는 곳엔 안 겹쳐요">?</span>
           </label>
-          <p class="hint">캐릭터 바깥 테두리를 선으로 그려요. 검은 윤곽선이 없는 인형·사진의 몸통 윤곽용. 이미 검은 선이 있는 곳엔 안 겹쳐요</p>
         </div>
 
         <div class="control-row control-row-checkbox">
           <label class="checkbox-label" for="colorEdge">
             <input type="checkbox" id="colorEdge" checked>
             색 경계 선
+            <span class="help" tabindex="0" data-tip="색이 확 바뀌는 곳(볼·무늬)만 선으로. 강도를 올리면 그림자 같은 애매한 경계도 잡아요">?</span>
           </label>
           <label for="colorEdgeStrength" class="sub-label">강도 <span class="value" id="colorEdgeStrengthVal">70</span></label>
-          <input type="range" id="colorEdgeStrength" min="0" max="100" step="5" value="70">
-          <p class="hint">색이 확 바뀌는 곳(볼·무늬)만 선으로. 강도를 올리면 그림자 같은 애매한 경계도 잡아요</p>
+          <input type="range" id="colorEdgeStrength" min="0" max="100" step="1" value="70">
         </div>
 
         <div class="control-row">
-          <label for="denoise">단순화 정도 <span class="value" id="denoiseVal">3</span></label>
-          <input type="range" id="denoise" min="0.5" max="30" step="0.5" value="3">
-          <p class="hint">JPEG 얼룩·잔 점을 뭉개요. 너무 올리면 가는 선이 사라져요</p>
+          <label for="denoise"><span>단순화 정도 <span class="help" tabindex="0" data-tip="JPEG 얼룩·잔 점을 뭉개요. 너무 올리면 가는 선이 사라져요">?</span></span><span class="value" id="denoiseVal">3</span></label>
+          <input type="range" id="denoise" min="0.5" max="30" step="0.25" value="3">
+        </div>
+
+        <div class="control-row control-row-checkbox">
+          <span class="row-title">용도 <span class="help" tabindex="0" data-tip="색칠용은 검고 보통 굵기, 따라 그리기용은 연한 회색 가는 선이라 위에 펜으로 따라 그릴 수 있어요. 아래 굵기·진하기를 한 번에 맞춰요">?</span></span>
+          <div class="preset-row">
+            <button class="preset-btn" type="button" data-thickness="1" data-tone="100">🎨 색칠용</button>
+            <button class="preset-btn" type="button" data-thickness="0.5" data-tone="30">✏️ 따라 그리기용</button>
+          </div>
         </div>
 
         <div class="control-row">
-          <label for="thickness">선 굵기 <span class="value" id="thicknessVal">1</span></label>
-          <input type="range" id="thickness" min="0" max="20" step="0.5" value="1">
-          <p class="hint">1이면 원본 그대로, 클수록 굵게, 0.5·0이면 더 가늘게</p>
+          <label for="thickness"><span>선 굵기 <span class="help" tabindex="0" data-tip="1이면 원본 그대로, 클수록 굵게, 1보다 작으면 더 가늘게">?</span></span><span class="value" id="thicknessVal">1</span></label>
+          <input type="range" id="thickness" min="0" max="30" step="0.25" value="1">
         </div>
 
         <div class="control-row">
-          <label for="titleInput">제목 <span class="value" style="font-weight:500">선택</span></label>
-          <input type="text" id="titleInput" class="text-input" maxlength="30" placeholder="예: 피카츄 (인쇄할 때 아래에 찍혀요)">
-          <label for="printOrient" class="sub-label">인쇄 방향</label>
-          <select id="printOrient" class="text-input">
-            <option value="auto" selected>자동 (그림 모양에 맞춰)</option>
-            <option value="portrait">세로</option>
-            <option value="landscape">가로</option>
-          </select>
+          <label for="lineTone"><span>선 진하기 <span class="help" tabindex="0" data-tip="100이면 검정, 낮출수록 연한 회색. 따라 그리기용 선은 20~40이 적당해요">?</span></span><span class="value" id="lineToneVal">100</span></label>
+          <input type="range" id="lineTone" min="5" max="100" step="1" value="100">
         </div>
 
         <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>
@@ -139,12 +138,45 @@
   </footer>
 </div>
 
-<!-- 인쇄 전용 레이아웃: A4 한 장에 결과물 크게 + 원본 우측 하단 작게 + 제목. 화면에선 안 보임 -->
+<!-- 인쇄 전용 레이아웃: 화면에선 안 보임. 배치(원본 위치·크기, 제목 위치)는 인쇄 배치 모달에서 정한 값을 그대로 씀 -->
 <style id="printPageStyle"></style>
 <div class="print-sheet portrait" id="printSheet" aria-hidden="true">
   <img class="print-result" id="printResult" alt="">
   <img class="print-original" id="printOriginal" alt="">
   <p class="print-title" id="printTitle"></p>
+</div>
+
+<!-- 인쇄 배치 모달: 종이 미리보기 위에서 원본을 드래그·크기 조절, 제목 드래그 -->
+<div class="modal" id="printModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>인쇄 배치</h2>
+      <label class="modal-field">방향
+        <select id="printOrient" class="text-input">
+          <option value="auto" selected>자동</option>
+          <option value="portrait">세로</option>
+          <option value="landscape">가로</option>
+        </select>
+      </label>
+      <label class="modal-field checkbox-label"><input type="checkbox" id="showOriginal" checked> 원본 넣기</label>
+      <label class="modal-field grow">제목 <input type="text" id="titleInput" class="text-input" maxlength="30" placeholder="선택 · 예: 피카츄"></label>
+    </div>
+    <div class="page-preview-wrap">
+      <div class="page-preview portrait" id="pagePreview">
+        <img class="pv-result" id="pvResult" alt="">
+        <div class="pv-original" id="pvOriginal">
+          <img id="pvOriginalImg" alt="">
+          <div class="pv-handle" id="pvHandle" title="끌어서 크기 조절"></div>
+        </div>
+        <div class="pv-title" id="pvTitle"></div>
+      </div>
+    </div>
+    <p class="hint">원본과 제목은 드래그해서 옮기고, 원본은 오른쪽 아래 모서리를 끌어 크기를 바꿔요. PDF로 저장하려면 인쇄창에서 "PDF로 저장"을 고르세요</p>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="printClose" type="button">닫기</button>
+      <button class="btn-primary" id="printGo" type="button">🖨️ 인쇄</button>
+    </div>
+  </div>
 </div>
 
 <div class="lightbox" id="lightbox" hidden>

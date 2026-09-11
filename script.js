@@ -50,6 +50,9 @@
   const thickness = document.getElementById('thickness');
   const thicknessVal = document.getElementById('thicknessVal');
 
+  const lineTone = document.getElementById('lineTone');
+  const lineToneVal = document.getElementById('lineToneVal');
+
   const titleInput = document.getElementById('titleInput');
   const printBtn = document.getElementById('printBtn');
   const printResult = document.getElementById('printResult');
@@ -58,6 +61,16 @@
   const printSheet = document.getElementById('printSheet');
   const printOrient = document.getElementById('printOrient');
   const printPageStyle = document.getElementById('printPageStyle');
+  const printModal = document.getElementById('printModal');
+  const printClose = document.getElementById('printClose');
+  const printGo = document.getElementById('printGo');
+  const showOriginal = document.getElementById('showOriginal');
+  const pagePreview = document.getElementById('pagePreview');
+  const pvResult = document.getElementById('pvResult');
+  const pvOriginal = document.getElementById('pvOriginal');
+  const pvOriginalImg = document.getElementById('pvOriginalImg');
+  const pvHandle = document.getElementById('pvHandle');
+  const pvTitle = document.getElementById('pvTitle');
 
   const eraserBtn = document.getElementById('eraserBtn');
   const eraserSizeWrap = document.getElementById('eraserSizeWrap');
@@ -74,7 +87,7 @@
   // inkDark 150: 작은 원본을 1200으로 키우면 안티앨리어싱 때문에 선 픽셀 최대값이 120~150까지 올라가서
   // 110으로는 점선이 됐다(실측). 회색 그림자가 딸려오면 내릴 것.
   const DEFAULTS = {
-    inkDark: 150, denoise: 3, thickness: 1, colorEdgeStrength: 70,
+    inkDark: 150, denoise: 3, thickness: 1, colorEdgeStrength: 70, lineTone: 100,
     bgRemove: true, silhouette: true, colorEdge: true,
   };
 
@@ -158,6 +171,7 @@
     [denoise, denoiseVal],
     [thickness, thicknessVal],
     [colorEdgeStrength, colorEdgeStrengthVal],
+    [lineTone, lineToneVal],
   ].forEach(([input, out]) => {
     input.addEventListener('input', () => {
       out.textContent = input.value;
@@ -166,11 +180,24 @@
   });
   [bgRemove, silhouette, colorEdge].forEach((box) => box.addEventListener('change', scheduleRender));
 
+  // 용도 프리셋: 굵기·진하기를 한 번에 (따라 그리기용 = 연한 회색 가는 선, 위에 펜으로 덧그리는 용도)
+  document.querySelectorAll('.preset-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      thickness.value = btn.dataset.thickness;
+      lineTone.value = btn.dataset.tone;
+      thicknessVal.textContent = thickness.value;
+      lineToneVal.textContent = lineTone.value;
+      scheduleRender();
+    });
+  });
+
   resetBtn.addEventListener('click', () => {
     inkDark.value = DEFAULTS.inkDark;
     denoise.value = DEFAULTS.denoise;
     thickness.value = DEFAULTS.thickness;
     colorEdgeStrength.value = DEFAULTS.colorEdgeStrength;
+    lineTone.value = DEFAULTS.lineTone;
+    lineToneVal.textContent = DEFAULTS.lineTone;
     inkDarkVal.textContent = DEFAULTS.inkDark;
     denoiseVal.textContent = DEFAULTS.denoise;
     thicknessVal.textContent = DEFAULTS.thickness;
@@ -471,8 +498,10 @@
     out.height = height;
     const octx = out.getContext('2d');
     const outData = octx.createImageData(width, height);
+    // 선 진하기: 100 → 검정(0), 30 → 연한 회색(178). 따라 그리기용.
+    const tone = Math.round(255 * (1 - parseFloat(lineTone.value) / 100));
     for (let i = 0; i < mask.length; i++) {
-      const v = mask[i] ? 0 : 255;
+      const v = mask[i] ? tone : 255;
       const o = i * 4;
       outData.data[o] = v;
       outData.data[o + 1] = v;
@@ -491,38 +520,118 @@
   // 함정: src를 넣자마자 print()를 부르면 data URL 디코딩이 안 끝나서 미리보기가 빈 종이로 나온다(실측).
   // 그래서 (1) 결과가 그려질 때마다 인쇄용 이미지를 미리 채워두고, (2) 버튼은 decode()를 기다린 뒤 인쇄한다.
   let printPrepTimer = null;
+  // 배치는 사용자가 종이 미리보기에서 직접 정한다 (원본 위치·폭, 제목 위치 — 모두 종이에 대한 비율).
+  // 미리보기와 인쇄 시트가 같은 비율·같은 % 좌표를 쓰므로 놓은 자리에 그대로 찍힌다.
+  // (처음엔 우측 하단 고정이었는데 그림마다 겹쳐서 어긋났다 → 사용자가 배치)
+  const layout = { origX: 0.74, origY: 0.72, origW: 0.24, titleX: 0.5, titleY: 0.96 };
+
   // 용지 방향: 자동이면 그림이 가로로 길 때 가로. CSS에 방향을 고정하면 브라우저 인쇄창의 레이아웃 옵션이
   // 잠기고 가로 그림이 세로 용지에 작게 찍혔다(실측) → @page 규칙을 매번 JS로 넣는다.
-  function applyPrintLayout() {
-    let orient = printOrient.value;
-    if (orient === 'auto') orient = resultCanvas.width > resultCanvas.height ? 'landscape' : 'portrait';
-    const title = titleInput.value.trim();
-    printSheet.className = 'print-sheet ' + orient + (title ? '' : ' no-title');
-    printPageStyle.textContent = '@media print { @page { size: A4 ' + orient + '; } }';
-    printTitle.textContent = title;
+  function currentOrient() {
+    const o = printOrient.value;
+    if (o !== 'auto') return o;
+    return resultCanvas.width > resultCanvas.height ? 'landscape' : 'portrait';
   }
+
+  function applyLayoutTo(sheet, origEl, titleEl) {
+    const showOrig = showOriginal.checked;
+    origEl.style.left = (layout.origX * 100) + '%';
+    origEl.style.top = (layout.origY * 100) + '%';
+    origEl.style.width = (layout.origW * 100) + '%';
+    origEl.style.display = showOrig ? '' : 'none';
+    titleEl.style.left = (layout.titleX * 100) + '%';
+    titleEl.style.top = (layout.titleY * 100) + '%';
+    titleEl.textContent = titleInput.value.trim();
+  }
+
+  function applyPrintLayout() {
+    const orient = currentOrient();
+    printSheet.className = 'print-sheet ' + orient;
+    pagePreview.className = 'page-preview ' + orient;
+    printPageStyle.textContent = '@media print { @page { size: A4 ' + orient + '; } }';
+    applyLayoutTo(printSheet, printOriginal, printTitle);
+    applyLayoutTo(pagePreview, pvOriginal, pvTitle);
+  }
+
   function updatePrintImages() {
     if (!lastPaint) return Promise.resolve();
     applyPrintLayout();
-    printResult.src = resultCanvas.toDataURL('image/png');
-    printOriginal.src = originalCanvas.width ? originalCanvas.toDataURL('image/png') : '';
+    const resultUrl = resultCanvas.toDataURL('image/png');
+    const origUrl = originalCanvas.width ? originalCanvas.toDataURL('image/png') : '';
+    printResult.src = resultUrl;
+    pvResult.src = resultUrl;
+    printOriginal.src = origUrl;
+    pvOriginalImg.src = origUrl;
     const waits = [printResult.decode().catch(() => {})];
-    if (printOriginal.getAttribute('src')) waits.push(printOriginal.decode().catch(() => {}));
+    if (origUrl) waits.push(printOriginal.decode().catch(() => {}));
     return Promise.all(waits);
   }
   function schedulePrintPrep() {
     clearTimeout(printPrepTimer);
     printPrepTimer = setTimeout(() => { updatePrintImages(); }, 400);
   }
+
   printBtn.addEventListener('click', async () => {
     if (!lastPaint) return;
+    await updatePrintImages();
+    printModal.hidden = false;
+  });
+  printClose.addEventListener('click', () => { printModal.hidden = true; });
+  printModal.addEventListener('click', (e) => { if (e.target === printModal) printModal.hidden = true; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !printModal.hidden) printModal.hidden = true;
+  });
+  printGo.addEventListener('click', async () => {
     await updatePrintImages();
     window.print();
   });
   titleInput.addEventListener('input', applyPrintLayout);
   printOrient.addEventListener('change', applyPrintLayout);
+  showOriginal.addEventListener('change', applyPrintLayout);
   // Ctrl+P: 미리 채워둔 이미지를 쓴다 (여기서 await는 못 하므로 최선의 노력)
   window.addEventListener('beforeprint', () => { if (!printResult.getAttribute('src')) updatePrintImages(); });
+
+  // 미리보기 위에서 드래그(원본·제목)와 크기 조절(원본 모서리). 좌표는 종이에 대한 비율로 저장.
+  let dragging = null; // { kind: 'orig' | 'title' | 'resize', dx, dy }
+  const pageFrac = (e) => {
+    const r = pagePreview.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  };
+  pvHandle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    pagePreview.setPointerCapture(e.pointerId);
+    dragging = { kind: 'resize' };
+  });
+  pvOriginal.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    pagePreview.setPointerCapture(e.pointerId);
+    const [fx, fy] = pageFrac(e);
+    dragging = { kind: 'orig', dx: fx - layout.origX, dy: fy - layout.origY };
+  });
+  pvTitle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    pagePreview.setPointerCapture(e.pointerId);
+    const [fx, fy] = pageFrac(e);
+    dragging = { kind: 'title', dx: fx - layout.titleX, dy: fy - layout.titleY };
+  });
+  pagePreview.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const [fx, fy] = pageFrac(e);
+    if (dragging.kind === 'orig') {
+      layout.origX = clamp(fx - dragging.dx, 0, 1 - layout.origW);
+      layout.origY = clamp(fy - dragging.dy, 0, 0.98);
+    } else if (dragging.kind === 'title') {
+      layout.titleX = clamp(fx - dragging.dx, 0.05, 0.95);
+      layout.titleY = clamp(fy - dragging.dy, 0.02, 0.98);
+    } else {
+      layout.origW = clamp(fx - layout.origX, 0.06, 1 - layout.origX);
+    }
+    applyPrintLayout();
+  });
+  const endDrag = () => { dragging = null; };
+  pagePreview.addEventListener('pointerup', endDrag);
+  pagePreview.addEventListener('pointercancel', endDrag);
 
   // ---------- 지우개 ----------
   function applyEraseStrokes() {
