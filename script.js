@@ -1,6 +1,10 @@
 // 색칠공부 변환기 — 모든 처리는 브라우저 안에서만 일어난다 (업로드/네트워크 요청 없음)
 (() => {
   const MAX_DIMENSION = 1600; // 성능 보호용 최대 변 길이
+  // 작은 원본(이미지 검색 썸네일을 우클릭 저장한 400~600px짜리가 대부분)은 처리 전에 이 크기로 확대한다.
+  // 안 그러면 단순화 3(블러 반경)이 작은 그림에선 귀·얼굴선 같은 요소를 통째로 지워버리고,
+  // 결과 PNG도 인쇄하기엔 너무 작다. 확대해 두면 슬라이더 감각이 큰 사진과 같아진다.
+  const MIN_DIMENSION = 1200;
 
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
@@ -80,7 +84,10 @@
   }
 
   function fitSize(w, h) {
-    const scale = Math.min(1, MAX_DIMENSION / Math.max(w, h));
+    const longest = Math.max(w, h);
+    let scale = 1;
+    if (longest > MAX_DIMENSION) scale = MAX_DIMENSION / longest;
+    else if (longest < MIN_DIMENSION) scale = MIN_DIMENSION / longest;
     return { width: Math.round(w * scale), height: Math.round(h * scale) };
   }
 
@@ -186,6 +193,7 @@
     src.width = width;
     src.height = height;
     const sctx = src.getContext('2d', { willReadFrequently: true });
+    sctx.imageSmoothingQuality = 'high'; // 확대 시 계단 현상 대신 부드러운 경사로 → 엣지 검출이 깔끔
     sctx.drawImage(sourceImage, 0, 0, width, height);
     const imageData = sctx.getImageData(0, 0, width, height);
 
