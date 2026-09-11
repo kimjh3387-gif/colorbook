@@ -36,7 +36,10 @@
 
   // denoise 기본값 3: 6이면 해·광배처럼 가늘고 대비 약한 요소가 흐림 단계에서 통째로 지워진다
   // (측정: 단순화 2~4에서는 해가 잡히고 6에서는 0). 3이면 텍스처는 눌리면서 해는 살아남는다.
-  const DEFAULTS = { sensitivity: 50, thickness: 1, denoise: 3, adaptive: 60, shading: false };
+  // sensitivity 기본값 70: 컬러 그래디언트로 바꾼 뒤 흰 배경 실루엣이 워낙 세게 잡혀서 상위 n%를
+  // 독식한다. 50이면 실루엣만 남고 눈·볼·입이 빠지고, 65면 입이 빠지고, 70에서 얼굴이 다 들어온다
+  // (피카츄 썸네일 실측). 75부터는 JPEG 링잉이 손·발 근처에 꼬불선으로 나타나기 시작한다.
+  const DEFAULTS = { sensitivity: 70, thickness: 1, denoise: 3, adaptive: 60, shading: false };
 
   let sourceImage = null; // HTMLImageElement
   let renderQueued = false;
@@ -197,17 +200,22 @@
     sctx.drawImage(sourceImage, 0, 0, width, height);
     const imageData = sctx.getImageData(0, 0, width, height);
 
-    const gray = toGrayscale(imageData);
+    // 흑백(휘도)만 보면 캐릭터 그림에서 중요한 경계가 통째로 사라진다:
+    //   흰 배경 위 노랑(피카츄) = 휘도 차이 ~50 뿐이라 얼굴 윤곽이 끊기고,
+    //   노랑 위 빨강 볼·분홍 입은 휘도로는 흐릿한데 색으로는 확연하다.
+    // 그래서 R/G/B 채널을 따로 흐린 뒤 세 채널의 변화를 합쳐 "색이 바뀌는 곳"을 선으로 잡는다.
+    const channels = splitChannels(imageData);
 
     // 1) 단순화: 반경이 클수록 잔 디테일이 사라져 아이들용 단순한 그림이 된다.
     //    박스 블러 2회는 가우시안 블러의 값싼 근사. 반경은 0.5 단위(소수)까지 받는다.
     const radius = Math.max(0.5, parseFloat(denoise.value));
-    const smooth = blurFractional(blurFractional(gray, width, height, radius), width, height, radius);
+    const blur2 = (ch) => blurFractional(blurFractional(ch, width, height, radius), width, height, radius);
+    const smoothRGB = [blur2(channels.r), blur2(channels.g), blur2(channels.b)];
 
     // 2) 블러 반경만큼 떨어진 픽셀끼리 비교한다. 블러가 경계를 폭 ~2*radius의 완만한
     //    경사로 펴놓기 때문에, 이웃 1픽셀만 보는 고정 3x3 커널로는 그 경사를 못 잡는다.
     const step = Math.max(1, Math.round(radius));
-    const { mag, dir } = gradient(smooth, width, height, step);
+    const { mag, dir } = gradientColor(smoothRGB, width, height, step);
 
     // 3) 경사면 전체가 아니라 능선(정점)만 남긴다 — 굵은 띠가 아니라 한 줄 선이 되도록.
     const ridge = nonMaxSuppress(mag, dir, width, height, step);
@@ -246,6 +254,7 @@
     // 음영(옵션): 어두운 영역에 연한 회색 플랫톤만 깐다. 해칭 노이즈가 아니라 면 단위 채우기.
     let shadeMask = null;
     if (shading.checked) {
+      const smooth = blur2(channels.gray); // 음영은 밝기 기준이라 휘도를 따로 흐린다
       let sum = 0;
       for (let i = 0; i < smooth.length; i++) sum += smooth[i];
       const shadeThreshold = (sum / smooth.length) * 0.65;
@@ -280,6 +289,23 @@
     octx.putImageData(outData, 0, 0);
 
     resultCanvas.getContext('2d').drawImage(out, 0, 0);
+  }
+
+  // R/G/B 채널과 휘도를 각각 Float32 배열로 분리
+  function splitChannels(imageData) {
+    const { data, width, height } = imageData;
+    const n = width * height;
+    const r = new Float32Array(n);
+    const g = new Float32Array(n);
+    const b = new Float32Array(n);
+    const gray = new Float32Array(n);
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      r[p] = data[i];
+      g[p] = data[i + 1];
+      b[p] = data[i + 2];
+      gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    }
+    return { r, g, b, gray };
   }
 
   function toGrayscale(imageData) {
@@ -367,6 +393,39 @@
 
   function clamp(v, lo, hi) {
     return v < lo ? lo : v > hi ? hi : v;
+  }
+
+  // 색 변화의 세기와 방향. 세 채널의 변화 벡터를 합쳐(RGB 공간에서의 거리) 세기로 쓰고,
+  // 방향은 가장 크게 변한 채널의 것을 따른다 — 방향은 NMS에서 4방향으로 양자화되므로 이 정도로 충분.
+  // dir: 0=가로변화(│선) 1=대각(/) 2=세로변화(─선) 3=대각(\)
+  function gradientColor(chs, width, height, step) {
+    const mag = new Float32Array(width * height);
+    const dir = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      const rowT = clamp(y - step, 0, height - 1) * width;
+      const rowB = clamp(y + step, 0, height - 1) * width;
+      for (let x = 0; x < width; x++) {
+        const xl = row + clamp(x - step, 0, width - 1);
+        const xr = row + clamp(x + step, 0, width - 1);
+        let sum = 0;
+        let best = -1;
+        let bgx = 0;
+        let bgy = 0;
+        for (let c = 0; c < chs.length; c++) {
+          const ch = chs[c];
+          const gx = ch[xr] - ch[xl];
+          const gy = ch[rowB + x] - ch[rowT + x];
+          const m = gx * gx + gy * gy;
+          sum += m;
+          if (m > best) { best = m; bgx = gx; bgy = gy; }
+        }
+        mag[row + x] = Math.sqrt(sum);
+        const angle = ((Math.atan2(bgy, bgx) * 180 / Math.PI) % 180 + 180) % 180;
+        dir[row + x] = (angle < 22.5 || angle >= 157.5) ? 0 : angle < 67.5 ? 1 : angle < 112.5 ? 2 : 3;
+      }
+    }
+    return { mag, dir };
   }
 
   // 밝기 변화의 세기와 방향. step은 블러 반경에 맞춘다.
