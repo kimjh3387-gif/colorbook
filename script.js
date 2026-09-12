@@ -63,6 +63,9 @@
   const printSheet = document.getElementById('printSheet');
   const printOrient = document.getElementById('printOrient');
   const printPageStyle = document.getElementById('printPageStyle');
+  const marginSide = document.getElementById('marginSide');
+  const marginSize = document.getElementById('marginSize');
+  const marginSizeVal = document.getElementById('marginSizeVal');
   const origBtn = document.getElementById('origBtn');
   const ovOriginal = document.getElementById('ovOriginal');
   const ovTitle = document.getElementById('ovTitle');
@@ -169,6 +172,7 @@
     [lineTone, lineToneVal],
     [gapClose, gapCloseVal],
     [tinyFill, tinyFillVal],
+    [marginSize, marginSizeVal],
   ].forEach(([input, out]) => {
     input.addEventListener('input', () => {
       out.textContent = input.value;
@@ -176,6 +180,7 @@
     });
   });
   [bgRemove, silhouette, colorEdge].forEach((box) => box.addEventListener('change', scheduleRender));
+  marginSide.addEventListener('change', scheduleRender);
 
   // 용도 프리셋: 굵기·진하기를 한 번에 (따라 그리기용 = 연한 회색 가는 선, 위에 펜으로 덧그리는 용도)
   document.querySelectorAll('.preset-btn').forEach((btn) => {
@@ -199,6 +204,9 @@
     gapCloseVal.textContent = DEFAULTS.gapClose;
     tinyFill.value = DEFAULTS.tinyFill;
     tinyFillVal.textContent = DEFAULTS.tinyFill;
+    marginSide.value = 'none';
+    marginSize.value = 25;
+    marginSizeVal.textContent = 25;
     inkDarkVal.textContent = DEFAULTS.inkDark;
     denoiseVal.textContent = DEFAULTS.denoise;
     thicknessVal.textContent = DEFAULTS.thickness;
@@ -497,9 +505,29 @@
   }
 
   // 마스크(1=선)를 결과 캔버스에 그린다. 그린 뒤 지우개 자국을 다시 얹는다.
+  // 여백 추가: 그림 바깥에 흰 여백을 붙인 최종 캔버스 크기와 그림 오프셋. 원본·제목을 놓을 자리가 생긴다.
+  // 지우개 자국·원본 위치는 최종 캔버스 비율 좌표라, 여백을 바꾸면 자리가 밀린다 (여백 먼저 정하고 배치할 것).
+  function marginBox(width, height) {
+    const side = marginSide.value;
+    const f = parseFloat(marginSize.value) / 100;
+    const padX = Math.round(width * f), padY = Math.round(height * f);
+    switch (side) {
+      case 'bottom': return { W: width, H: height + padY, ox: 0, oy: 0 };
+      case 'top': return { W: width, H: height + padY, ox: 0, oy: padY };
+      case 'right': return { W: width + padX, H: height, ox: 0, oy: 0 };
+      case 'left': return { W: width + padX, H: height, ox: padX, oy: 0 };
+      case 'all': {
+        const p = Math.round(Math.max(width, height) * f / 2);
+        return { W: width + 2 * p, H: height + 2 * p, ox: p, oy: p };
+      }
+      default: return { W: width, H: height, ox: 0, oy: 0 };
+    }
+  }
+
   function paintMask(mask, width, height) {
-    resultCanvas.width = width;
-    resultCanvas.height = height;
+    const box = marginBox(width, height);
+    resultCanvas.width = box.W;
+    resultCanvas.height = box.H;
     const out = document.createElement('canvas');
     out.width = width;
     out.height = height;
@@ -516,7 +544,10 @@
       outData.data[o + 3] = 255;
     }
     octx.putImageData(outData, 0, 0);
-    resultCanvas.getContext('2d').drawImage(out, 0, 0);
+    const rctx = resultCanvas.getContext('2d');
+    rctx.fillStyle = '#fff';
+    rctx.fillRect(0, 0, box.W, box.H);
+    rctx.drawImage(out, box.ox, box.oy);
     lastPaint = { mask, width, height };
     applyEraseStrokes();
     drawOverlays();
