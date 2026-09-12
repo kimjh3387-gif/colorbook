@@ -103,6 +103,15 @@
           <input type="range" id="lineTone" min="5" max="100" step="1" value="100">
         </div>
 
+        <div class="control-row">
+          <label for="printOrient"><span>인쇄 용지 방향 <span class="help" tabindex="0" data-tip="자동이면 그림이 가로로 길 때 가로 용지. PDF로 저장하려면 인쇄창에서 'PDF로 저장'을 고르세요">?</span></span></label>
+          <select id="printOrient" class="text-input">
+            <option value="auto" selected>자동 (그림 모양에 맞춰)</option>
+            <option value="portrait">세로</option>
+            <option value="landscape">가로</option>
+          </select>
+        </div>
+
         <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>
         <button class="btn-primary" id="printBtn" type="button">🖨️ 인쇄 / PDF 저장</button>
         <button class="btn-secondary" id="downloadBtn" type="button">PNG로 다운로드</button>
@@ -129,11 +138,20 @@
               </label>
               <button class="tool-btn" id="undoBtn" type="button" disabled title="Ctrl+Z">↶ 되돌리기</button>
               <button class="tool-btn" id="clearEraseBtn" type="button" disabled>지운 것 모두 취소</button>
+              <span class="tools-sep"></span>
+              <button class="tool-btn" id="origBtn" type="button" aria-pressed="false" title="원본 사진을 그림 위에 작게 넣어요. 드래그로 옮기고 모서리로 크기 조절">🖼️ 원본 넣기</button>
+              <input type="text" id="titleInput" class="text-input tool-title" maxlength="30" placeholder="제목 (선택)" title="그림 위에 제목을 넣어요. 드래그로 옮길 수 있어요">
             </div>
           </div>
           <div class="canvas-wrap checker" id="resultWrap">
             <canvas id="resultCanvas"></canvas>
             <div class="eraser-cursor" id="eraserCursor" hidden></div>
+            <!-- 원본·제목은 캔버스에 직접 그려지고, 아래 박스는 드래그·크기조절 손잡이일 뿐 -->
+            <div class="ov-box" id="ovOriginal" hidden>
+              <div class="ov-handle nw" data-corner="nw"></div><div class="ov-handle ne" data-corner="ne"></div>
+              <div class="ov-handle sw" data-corner="sw"></div><div class="ov-handle se" data-corner="se"></div>
+            </div>
+            <div class="ov-title" id="ovTitle" hidden></div>
             <div class="processing-overlay" id="processingOverlay" hidden>변환 중…</div>
           </div>
         </div>
@@ -146,45 +164,10 @@
   </footer>
 </div>
 
-<!-- 인쇄 전용 레이아웃: 화면에선 안 보임. 배치(원본 위치·크기, 제목 위치)는 인쇄 배치 모달에서 정한 값을 그대로 씀 -->
+<!-- 인쇄 전용: 결과 캔버스(원본·제목이 이미 그려져 있음)를 A4 한 장에 contain 으로. 화면에선 안 보임 -->
 <style id="printPageStyle"></style>
 <div class="print-sheet portrait" id="printSheet" aria-hidden="true">
   <img class="print-result" id="printResult" alt="">
-  <img class="print-original" id="printOriginal" alt="">
-  <p class="print-title" id="printTitle"></p>
-</div>
-
-<!-- 인쇄 배치 모달: 종이 미리보기 위에서 원본을 드래그·크기 조절, 제목 드래그 -->
-<div class="modal" id="printModal" hidden>
-  <div class="modal-card">
-    <div class="modal-head">
-      <h2>인쇄 배치</h2>
-      <label class="modal-field">방향
-        <select id="printOrient" class="text-input">
-          <option value="auto" selected>자동</option>
-          <option value="portrait">세로</option>
-          <option value="landscape">가로</option>
-        </select>
-      </label>
-      <label class="modal-field checkbox-label"><input type="checkbox" id="showOriginal" checked> 원본 넣기</label>
-      <label class="modal-field grow">제목 <input type="text" id="titleInput" class="text-input" maxlength="30" placeholder="선택 · 예: 피카츄"></label>
-    </div>
-    <div class="page-preview-wrap">
-      <div class="page-preview portrait" id="pagePreview">
-        <img class="pv-result" id="pvResult" alt="">
-        <div class="pv-original" id="pvOriginal">
-          <img id="pvOriginalImg" alt="">
-          <div class="pv-handle" id="pvHandle" title="끌어서 크기 조절"></div>
-        </div>
-        <div class="pv-title" id="pvTitle"></div>
-      </div>
-    </div>
-    <p class="hint">원본과 제목은 드래그해서 옮기고, 원본은 오른쪽 아래 모서리를 끌어 크기를 바꿔요. PDF로 저장하려면 인쇄창에서 "PDF로 저장"을 고르세요</p>
-    <div class="modal-actions">
-      <button class="btn-secondary" id="printClose" type="button">닫기</button>
-      <button class="btn-primary" id="printGo" type="button">🖨️ 인쇄</button>
-    </div>
-  </div>
 </div>
 
 <div class="lightbox" id="lightbox" hidden>

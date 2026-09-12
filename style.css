@@ -240,7 +240,8 @@ body {
   @page { margin: 10mm; }
   body { background: #fff; }
   .app, .lightbox, .modal { display: none !important; }
-  .print-sheet { display: block; }
+  /* !important 필수: 아래 화면용 .print-sheet { display:none } 이 파일 뒤에 있어서 그냥 block은 덮인다 (빈 종이 인쇄 버그) */
+  .print-sheet { display: block !important; }
 }
 /* 인쇄 시트와 배치 미리보기는 같은 비율·같은 % 좌표를 쓴다 → 미리보기에서 놓은 자리에 그대로 찍힌다 */
 .print-sheet {
@@ -252,101 +253,60 @@ body {
 }
 .print-sheet.portrait { width: 190mm; height: 277mm; }   /* A4 210×297 − 여백 20 */
 .print-sheet.landscape { width: 277mm; height: 190mm; }
-.print-result, .pv-result {
+.print-result {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
-.print-original { position: absolute; height: auto; }
-.print-original:not([src]), .print-original[src=""] { display: none; }
-.print-title, .pv-title {
-  position: absolute;
-  margin: 0;
-  transform: translate(-50%, -50%);
-  white-space: nowrap;
-  font-size: 5cqw;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  color: #222;
-}
-
-/* ---------- 인쇄 배치 모달 ---------- */
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(20, 18, 15, 0.6);
-}
-.modal-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 16px;
-  width: min(960px, 100%);
-  max-height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.modal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.modal-head h2 { margin: 0; font-size: 16px; margin-right: auto; }
-.modal-field { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
-.modal-field.grow { flex: 1 1 200px; }
-.modal-field .text-input { width: auto; flex: 1; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.modal-actions button { width: auto; min-width: 120px; }
-
-.page-preview-wrap { display: flex; justify-content: center; overflow: auto; min-height: 0; }
-.page-preview {
-  position: relative;
-  background: #fff;
-  border: 1px solid #ccc;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  container-type: inline-size;
-  user-select: none;
-  touch-action: none;
-}
-.page-preview.portrait { width: min(440px, 100%); aspect-ratio: 190 / 277; }
-.page-preview.landscape { width: min(680px, 100%); aspect-ratio: 277 / 190; }
-.pv-original {
+/* ---------- 결과 위 배치 손잡이 (원본·제목) ---------- */
+.tools-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
+.tool-title { width: 140px; padding: 5px 8px; font-size: 12px; }
+.ov-box {
   position: absolute;
   cursor: move;
   outline: 2px dashed var(--accent);
-  outline-offset: 2px;
+  outline-offset: 1px;
+  touch-action: none;
 }
-.pv-original img { display: block; width: 100%; height: auto; pointer-events: none; }
-.pv-original.hidden { display: none; }
-.pv-handle {
+.ov-handle {
   position: absolute;
-  right: -7px;
-  bottom: -7px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid #fff;
-  cursor: nwse-resize;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
-.pv-title { cursor: move; padding: 2px 6px; }
-.pv-title:empty { display: none; }
-.pv-title:hover { outline: 2px dashed var(--accent); }
+.ov-handle.nw { left: -8px; top: -8px; cursor: nwse-resize; }
+.ov-handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.ov-handle.ne { right: -8px; top: -8px; cursor: nesw-resize; }
+.ov-handle.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
+.ov-title {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: transparent;          /* 글자는 캔버스에 그려져 있고, 이건 드래그 영역만 */
+  cursor: move;
+  padding: 2px 8px;
+  touch-action: none;
+}
+.ov-title:hover { outline: 2px dashed var(--accent); }
 
 .checkbox-label {
   display: flex;
   align-items: center;
-  justify-content: flex-start; /* .control-row label의 space-between을 이긴다 — 글자·? 아이콘이 붙어 있게 */
+  justify-content: flex-start;
   gap: 8px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
+/* .control-row label(0,1,1)이 .checkbox-label(0,1,0)보다 세서 space-between이 이겼다 → 명시도 맞춰서 덮는다 */
+.control-row .checkbox-label { justify-content: flex-start; }
 .checkbox-label input[type="checkbox"] {
   accent-color: var(--accent);
   width: 16px;

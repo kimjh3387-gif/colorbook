@@ -60,21 +60,12 @@
   const titleInput = document.getElementById('titleInput');
   const printBtn = document.getElementById('printBtn');
   const printResult = document.getElementById('printResult');
-  const printOriginal = document.getElementById('printOriginal');
-  const printTitle = document.getElementById('printTitle');
   const printSheet = document.getElementById('printSheet');
   const printOrient = document.getElementById('printOrient');
   const printPageStyle = document.getElementById('printPageStyle');
-  const printModal = document.getElementById('printModal');
-  const printClose = document.getElementById('printClose');
-  const printGo = document.getElementById('printGo');
-  const showOriginal = document.getElementById('showOriginal');
-  const pagePreview = document.getElementById('pagePreview');
-  const pvResult = document.getElementById('pvResult');
-  const pvOriginal = document.getElementById('pvOriginal');
-  const pvOriginalImg = document.getElementById('pvOriginalImg');
-  const pvHandle = document.getElementById('pvHandle');
-  const pvTitle = document.getElementById('pvTitle');
+  const origBtn = document.getElementById('origBtn');
+  const ovOriginal = document.getElementById('ovOriginal');
+  const ovTitle = document.getElementById('ovTitle');
 
   const eraserBtn = document.getElementById('eraserBtn');
   const eraserSizeWrap = document.getElementById('eraserSizeWrap');
@@ -528,6 +519,7 @@
     resultCanvas.getContext('2d').drawImage(out, 0, 0);
     lastPaint = { mask, width, height };
     applyEraseStrokes();
+    drawOverlays();
     schedulePrintPrep();
   }
 
@@ -536,118 +528,182 @@
   // 함정: src를 넣자마자 print()를 부르면 data URL 디코딩이 안 끝나서 미리보기가 빈 종이로 나온다(실측).
   // 그래서 (1) 결과가 그려질 때마다 인쇄용 이미지를 미리 채워두고, (2) 버튼은 decode()를 기다린 뒤 인쇄한다.
   let printPrepTimer = null;
-  // 배치는 사용자가 종이 미리보기에서 직접 정한다 (원본 위치·폭, 제목 위치 — 모두 종이에 대한 비율).
-  // 미리보기와 인쇄 시트가 같은 비율·같은 % 좌표를 쓰므로 놓은 자리에 그대로 찍힌다.
-  // (처음엔 우측 하단 고정이었는데 그림마다 겹쳐서 어긋났다 → 사용자가 배치)
-  const layout = { origX: 0.74, origY: 0.72, origW: 0.24, titleX: 0.5, titleY: 0.96 };
+  // ---------- 원본·제목 배치 (결과 그림 위에 직접) ----------
+  // 원본 썸네일과 제목은 결과 캔버스에 **그려 넣는다** → PNG 다운로드·크게 보기·인쇄 전부에 그대로 들어간다.
+  // 화면의 점선 박스는 드래그·크기조절 손잡이일 뿐 (글자도 캔버스에 그려지고 DOM 쪽은 투명).
+  // 좌표는 캔버스에 대한 비율: origX/origY/titleX/titleY (폭·높이 기준), origW(폭 기준). 이미지를 바꿔도 유지.
+  // (처음엔 인쇄 직전에 종이 위에서 배치했는데, 작업하면서 바로 보고 PNG에도 들어가는 게 낫다는 사용자 판단)
+  const layout = { origX: 0.74, origY: 0.72, origW: 0.24, titleX: 0.5, titleY: 0.95 };
+  let origOn = false;
 
-  // 용지 방향: 자동이면 그림이 가로로 길 때 가로. CSS에 방향을 고정하면 브라우저 인쇄창의 레이아웃 옵션이
-  // 잠기고 가로 그림이 세로 용지에 작게 찍혔다(실측) → @page 규칙을 매번 JS로 넣는다.
+  function drawOverlays() {
+    const ctx = resultCanvas.getContext('2d');
+    const W = resultCanvas.width, H = resultCanvas.height;
+    if (origOn && originalCanvas.width) {
+      const w = layout.origW * W;
+      const h = w * originalCanvas.height / originalCanvas.width;
+      const x = layout.origX * W, y = layout.origY * H;
+      ctx.save();
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(x, y, w, h);
+      ctx.drawImage(originalCanvas, x, y, w, h);
+      ctx.strokeStyle = '#bbb';
+      ctx.lineWidth = Math.max(1, W * 0.002);
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+    const title = titleInput.value.trim();
+    if (title) {
+      ctx.save();
+      ctx.fillStyle = '#222';
+      ctx.font = '800 ' + Math.round(W * 0.05) + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(title, layout.titleX * W, layout.titleY * H);
+      ctx.restore();
+    }
+    positionOverlays();
+  }
+
+  // 화면의 손잡이를 캔버스가 실제로 그려진 영역(object-fit: contain 레터박스 안)에 맞춰 놓는다
+  function positionOverlays() {
+    if (!lastPaint) { ovOriginal.hidden = true; ovTitle.hidden = true; return; }
+    const g = canvasGeometry();
+    const wrapRect = resultWrap.getBoundingClientRect();
+    const ox = g.left - wrapRect.left, oy = g.top - wrapRect.top;
+    if (origOn && originalCanvas.width) {
+      const w = layout.origW * g.drawnW;
+      ovOriginal.style.left = (ox + layout.origX * g.drawnW) + 'px';
+      ovOriginal.style.top = (oy + layout.origY * g.drawnH) + 'px';
+      ovOriginal.style.width = w + 'px';
+      ovOriginal.style.height = (w * originalCanvas.height / originalCanvas.width) + 'px';
+      ovOriginal.hidden = false;
+    } else {
+      ovOriginal.hidden = true;
+    }
+    const title = titleInput.value.trim();
+    if (title) {
+      ovTitle.textContent = title;
+      ovTitle.style.left = (ox + layout.titleX * g.drawnW) + 'px';
+      ovTitle.style.top = (oy + layout.titleY * g.drawnH) + 'px';
+      ovTitle.style.fontSize = (g.drawnW * 0.05) + 'px';
+      ovTitle.hidden = false;
+    } else {
+      ovTitle.hidden = true;
+    }
+  }
+  window.addEventListener('resize', positionOverlays);
+
+  origBtn.addEventListener('click', () => {
+    origOn = !origOn;
+    origBtn.setAttribute('aria-pressed', origOn ? 'true' : 'false');
+    repaintWithStrokes();
+  });
+  titleInput.addEventListener('input', repaintWithStrokes);
+
+  // 드래그(원본·제목)와 네 모서리 크기조절(반대쪽 모서리 고정, 비율 유지). 좌표는 캔버스 비율.
+  let ovDrag = null;
+  const canvasFrac = (e) => {
+    const g = canvasGeometry();
+    return [(e.clientX - g.left) / g.drawnW, (e.clientY - g.top) / g.drawnH];
+  };
+  const origAspect = () => (originalCanvas.width ? originalCanvas.height / originalCanvas.width : 1);
+  const origHFrac = () => layout.origW * origAspect() * (resultCanvas.width / resultCanvas.height); // 높이 비율(캔버스 높이 기준)
+
+  ovOriginal.querySelectorAll('.ov-handle').forEach((hd) => {
+    hd.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      hd.setPointerCapture(e.pointerId);
+      const corner = hd.dataset.corner;
+      // 고정점 = 반대쪽 모서리
+      const x0 = layout.origX, y0 = layout.origY, x1 = layout.origX + layout.origW, y1 = layout.origY + origHFrac();
+      ovDrag = {
+        kind: 'resize', corner,
+        ax: corner.includes('w') ? x1 : x0,
+        ay: corner.includes('n') ? y1 : y0,
+      };
+    });
+    hd.addEventListener('pointermove', onOvMove);
+    hd.addEventListener('pointerup', endOvDrag);
+    hd.addEventListener('pointercancel', endOvDrag);
+  });
+  ovOriginal.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    ovOriginal.setPointerCapture(e.pointerId);
+    const [fx, fy] = canvasFrac(e);
+    ovDrag = { kind: 'orig', dx: fx - layout.origX, dy: fy - layout.origY };
+  });
+  ovTitle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    ovTitle.setPointerCapture(e.pointerId);
+    const [fx, fy] = canvasFrac(e);
+    ovDrag = { kind: 'title', dx: fx - layout.titleX, dy: fy - layout.titleY };
+  });
+  function onOvMove(e) {
+    if (!ovDrag) return;
+    const [fx, fy] = canvasFrac(e);
+    if (ovDrag.kind === 'orig') {
+      layout.origX = clamp(fx - ovDrag.dx, 0, 1 - layout.origW);
+      layout.origY = clamp(fy - ovDrag.dy, 0, 1 - origHFrac());
+    } else if (ovDrag.kind === 'title') {
+      layout.titleX = clamp(fx - ovDrag.dx, 0.05, 0.95);
+      layout.titleY = clamp(fy - ovDrag.dy, 0.03, 0.97);
+    } else {
+      // 고정점에서 포인터까지 폭·높이 중 큰 쪽으로 크기를 정하고 비율을 유지
+      const wFrac = Math.abs(fx - ovDrag.ax);
+      const hFrac = Math.abs(fy - ovDrag.ay);
+      const hToW = origAspect() * (resultCanvas.width / resultCanvas.height); // 폭 비율 → 높이 비율 계수
+      let w = Math.max(wFrac, hFrac / hToW);
+      w = clamp(w, 0.05, 1);
+      const h = w * hToW;
+      layout.origW = w;
+      layout.origX = clamp(ovDrag.corner.includes('w') ? ovDrag.ax - w : ovDrag.ax, 0, 1 - w);
+      layout.origY = clamp(ovDrag.corner.includes('n') ? ovDrag.ay - h : ovDrag.ay, 0, 1 - h);
+    }
+    repaintWithStrokes();
+  }
+  function endOvDrag() { ovDrag = null; }
+  [ovOriginal, ovTitle].forEach((el) => {
+    el.addEventListener('pointermove', onOvMove);
+    el.addEventListener('pointerup', endOvDrag);
+    el.addEventListener('pointercancel', endOvDrag);
+  });
+
+  // ---------- 인쇄 ----------
+  // 결과 캔버스(원본·제목 포함)를 A4 한 장에. 용지 방향: 자동이면 그림이 가로로 길 때 가로.
+  // CSS에 방향을 고정하면 브라우저 인쇄창의 레이아웃 옵션이 잠기고 가로 그림이 세로 용지에 작게 찍혔다(실측)
+  // → @page 규칙을 매번 JS로 넣는다. 함정: src를 넣자마자 print()를 부르면 미리보기가 빈 종이 → decode()를 기다린다.
   function currentOrient() {
     const o = printOrient.value;
     if (o !== 'auto') return o;
     return resultCanvas.width > resultCanvas.height ? 'landscape' : 'portrait';
   }
-
-  function applyLayoutTo(sheet, origEl, titleEl) {
-    const showOrig = showOriginal.checked;
-    origEl.style.left = (layout.origX * 100) + '%';
-    origEl.style.top = (layout.origY * 100) + '%';
-    origEl.style.width = (layout.origW * 100) + '%';
-    origEl.style.display = showOrig ? '' : 'none';
-    titleEl.style.left = (layout.titleX * 100) + '%';
-    titleEl.style.top = (layout.titleY * 100) + '%';
-    titleEl.textContent = titleInput.value.trim();
-  }
-
   function applyPrintLayout() {
     const orient = currentOrient();
     printSheet.className = 'print-sheet ' + orient;
-    pagePreview.className = 'page-preview ' + orient;
     printPageStyle.textContent = '@media print { @page { size: A4 ' + orient + '; } }';
-    applyLayoutTo(printSheet, printOriginal, printTitle);
-    applyLayoutTo(pagePreview, pvOriginal, pvTitle);
   }
-
   function updatePrintImages() {
     if (!lastPaint) return Promise.resolve();
     applyPrintLayout();
-    const resultUrl = resultCanvas.toDataURL('image/png');
-    const origUrl = originalCanvas.width ? originalCanvas.toDataURL('image/png') : '';
-    printResult.src = resultUrl;
-    pvResult.src = resultUrl;
-    printOriginal.src = origUrl;
-    pvOriginalImg.src = origUrl;
-    const waits = [printResult.decode().catch(() => {})];
-    if (origUrl) waits.push(printOriginal.decode().catch(() => {}));
-    return Promise.all(waits);
+    printResult.src = resultCanvas.toDataURL('image/png');
+    return printResult.decode().catch(() => {});
   }
   function schedulePrintPrep() {
     clearTimeout(printPrepTimer);
     printPrepTimer = setTimeout(() => { updatePrintImages(); }, 400);
   }
-
   printBtn.addEventListener('click', async () => {
     if (!lastPaint) return;
     await updatePrintImages();
-    printModal.hidden = false;
-  });
-  printClose.addEventListener('click', () => { printModal.hidden = true; });
-  printModal.addEventListener('click', (e) => { if (e.target === printModal) printModal.hidden = true; });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !printModal.hidden) printModal.hidden = true;
-  });
-  printGo.addEventListener('click', async () => {
-    await updatePrintImages();
     window.print();
   });
-  titleInput.addEventListener('input', applyPrintLayout);
   printOrient.addEventListener('change', applyPrintLayout);
-  showOriginal.addEventListener('change', applyPrintLayout);
   // Ctrl+P: 미리 채워둔 이미지를 쓴다 (여기서 await는 못 하므로 최선의 노력)
   window.addEventListener('beforeprint', () => { if (!printResult.getAttribute('src')) updatePrintImages(); });
-
-  // 미리보기 위에서 드래그(원본·제목)와 크기 조절(원본 모서리). 좌표는 종이에 대한 비율로 저장.
-  let dragging = null; // { kind: 'orig' | 'title' | 'resize', dx, dy }
-  const pageFrac = (e) => {
-    const r = pagePreview.getBoundingClientRect();
-    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
-  };
-  pvHandle.addEventListener('pointerdown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    pagePreview.setPointerCapture(e.pointerId);
-    dragging = { kind: 'resize' };
-  });
-  pvOriginal.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    pagePreview.setPointerCapture(e.pointerId);
-    const [fx, fy] = pageFrac(e);
-    dragging = { kind: 'orig', dx: fx - layout.origX, dy: fy - layout.origY };
-  });
-  pvTitle.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    pagePreview.setPointerCapture(e.pointerId);
-    const [fx, fy] = pageFrac(e);
-    dragging = { kind: 'title', dx: fx - layout.titleX, dy: fy - layout.titleY };
-  });
-  pagePreview.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    const [fx, fy] = pageFrac(e);
-    if (dragging.kind === 'orig') {
-      layout.origX = clamp(fx - dragging.dx, 0, 1 - layout.origW);
-      layout.origY = clamp(fy - dragging.dy, 0, 0.98);
-    } else if (dragging.kind === 'title') {
-      layout.titleX = clamp(fx - dragging.dx, 0.05, 0.95);
-      layout.titleY = clamp(fy - dragging.dy, 0.02, 0.98);
-    } else {
-      layout.origW = clamp(fx - layout.origX, 0.06, 1 - layout.origX);
-    }
-    applyPrintLayout();
-  });
-  const endDrag = () => { dragging = null; };
-  pagePreview.addEventListener('pointerup', endDrag);
-  pagePreview.addEventListener('pointercancel', endDrag);
 
   // ---------- 지우개 ----------
   function applyEraseStrokes() {
@@ -786,7 +842,7 @@
     ctx.restore();
   });
 
-  const endStroke = () => { activeStroke = null; schedulePrintPrep(); };
+  const endStroke = () => { if (activeStroke) { activeStroke = null; repaintWithStrokes(); } };
   resultWrap.addEventListener('pointerup', endStroke);
   resultWrap.addEventListener('pointercancel', endStroke);
   resultWrap.addEventListener('pointerleave', () => { eraserCursor.hidden = true; });
