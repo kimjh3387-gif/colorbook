@@ -104,25 +104,12 @@
         </div>
 
         <div class="control-row">
-          <label for="marginSide"><span>여백 추가 <span class="help" tabindex="0" data-tip="그림 바깥에 흰 여백을 붙여요. 원본 사진이나 제목을 놓을 자리가 생기고, PNG·인쇄에도 그대로 들어가요">?</span></span></label>
-          <select id="marginSide" class="text-input">
-            <option value="none" selected>없음</option>
-            <option value="bottom">아래</option>
-            <option value="right">오른쪽</option>
-            <option value="left">왼쪽</option>
-            <option value="top">위</option>
-            <option value="all">사방</option>
-          </select>
-          <label for="marginSize" class="sub-label">여백 크기 <span class="value" id="marginSizeVal">25</span>%</label>
-          <input type="range" id="marginSize" min="5" max="80" step="1" value="25">
-        </div>
-
-        <div class="control-row">
-          <label for="printOrient"><span>인쇄 용지 방향 <span class="help" tabindex="0" data-tip="자동이면 그림이 가로로 길 때 가로 용지. PDF로 저장하려면 인쇄창에서 'PDF로 저장'을 고르세요">?</span></span></label>
-          <select id="printOrient" class="text-input">
-            <option value="auto" selected>자동 (그림 모양에 맞춰)</option>
-            <option value="portrait">세로</option>
-            <option value="landscape">가로</option>
+          <label for="pageMode"><span>도화지 <span class="help" tabindex="0" data-tip="결과가 놓이는 종이. A4를 고르면 인쇄했을 때 화면과 똑같이 나와요. 그림·원본·제목은 도화지 위에서 드래그로 옮기고 모서리로 크기를 바꿔요">?</span></span></label>
+          <select id="pageMode" class="text-input">
+            <option value="auto" selected>A4 자동 (그림 모양에 맞춰)</option>
+            <option value="portrait">A4 세로</option>
+            <option value="landscape">A4 가로</option>
+            <option value="image">그림 비율 그대로</option>
           </select>
         </div>
 
@@ -153,6 +140,7 @@
               <button class="tool-btn" id="undoBtn" type="button" disabled title="Ctrl+Z">↶ 되돌리기</button>
               <button class="tool-btn" id="clearEraseBtn" type="button" disabled>지운 것 모두 취소</button>
               <span class="tools-sep"></span>
+              <button class="tool-btn" id="fitBtn" type="button" title="그림을 도화지 가운데에 꽉 차게 다시 맞춰요">⤢ 그림 맞춤</button>
               <button class="tool-btn" id="origBtn" type="button" aria-pressed="false" title="원본 사진을 그림 위에 작게 넣어요. 드래그로 옮기고 모서리로 크기 조절">🖼️ 원본 넣기</button>
               <input type="text" id="titleInput" class="text-input tool-title" maxlength="30" placeholder="제목 (선택)" title="그림 위에 제목을 넣어요. 드래그로 옮길 수 있어요">
             </div>
@@ -161,6 +149,10 @@
             <canvas id="resultCanvas"></canvas>
             <div class="eraser-cursor" id="eraserCursor" hidden></div>
             <!-- 원본·제목은 캔버스에 직접 그려지고, 아래 박스는 드래그·크기조절 손잡이일 뿐 -->
+            <div class="ov-box ov-drawing" id="ovDrawing" hidden>
+              <div class="ov-handle nw" data-corner="nw"></div><div class="ov-handle ne" data-corner="ne"></div>
+              <div class="ov-handle sw" data-corner="sw"></div><div class="ov-handle se" data-corner="se"></div>
+            </div>
             <div class="ov-box" id="ovOriginal" hidden>
               <div class="ov-handle nw" data-corner="nw"></div><div class="ov-handle ne" data-corner="ne"></div>
               <div class="ov-handle sw" data-corner="sw"></div><div class="ov-handle se" data-corner="se"></div>

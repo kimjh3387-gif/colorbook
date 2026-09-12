@@ -270,6 +270,11 @@ body {
   outline-offset: 1px;
   touch-action: none;
 }
+/* 그림 손잡이는 평소엔 연하게, 올리면 진하게 (그림을 가리지 않게) */
+.ov-drawing { outline-color: rgba(232, 115, 74, 0.35); }
+.ov-drawing .ov-handle { opacity: 0.55; }
+.ov-drawing:hover { outline-color: var(--accent); }
+.ov-drawing:hover .ov-handle { opacity: 1; }
 .ov-handle {
   position: absolute;
   width: 14px;
