@@ -251,14 +251,16 @@ body {
   container-type: inline-size;
   background: #fff;
 }
-.print-sheet.portrait { width: 190mm; height: 277mm; }   /* A4 210×297 − 여백 20 */
-.print-sheet.landscape { width: 277mm; height: 190mm; }
+ /* 시트 크기를 mm로 박지 않고 인쇄 뷰포트(= 용지에서 여백 뺀 영역) 전체로 → 어떤 용지·방향을 골라도 그림이 정중앙에 온다.
+   mm 고정일 땐 프린터 용지 설정과 어긋나면 그림이 위쪽에 붙고 아래가 비었다(사용자 실측) */
+.print-sheet { width: 100vw; height: 100vh; }
 .print-result {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  object-position: center center;
 }
 /* ---------- 결과 위 배치 손잡이 (원본·제목) ---------- */
 .tools-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
@@ -363,8 +365,15 @@ button {
 }
 
 .preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   color: var(--text-muted);
+  background: #fff;
 }
 
 .preview-grid {

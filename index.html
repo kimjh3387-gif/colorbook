@@ -129,12 +129,8 @@
     </aside>
 
     <section class="preview">
-      <div class="preview-empty" id="previewEmpty">
-        <span class="upload-icon big">🎨</span>
-        <p>왼쪽에서 이미지를 올리면 여기에 결과가 나와요</p>
-      </div>
-
-      <div class="preview-grid" id="previewGrid" hidden>
+      <!-- 이미지를 올리기 전에도 같은 카드(툴바+캔버스 틀)를 보여준다 → 올린 순간 화면이 출렁이지 않는다 -->
+      <div class="preview-grid" id="previewGrid">
         <div class="preview-card">
           <div class="card-head">
             <button class="zoom-btn" type="button" data-zoom="resultCanvas" title="크게 보기" aria-label="색칠공부 버전 크게 보기">🔍</button>
@@ -149,12 +145,17 @@
               <button class="tool-btn" id="clearEraseBtn" type="button" disabled>지운 것 모두 취소</button>
               <span class="tools-sep"></span>
               <button class="tool-btn" id="fitBtn" type="button" title="그림을 도화지 가운데에 꽉 차게 다시 맞춰요">⤢ 그림 맞춤</button>
+              <button class="tool-btn" id="resetLayoutBtn" type="button" title="도화지 배치를 처음으로: 그림 맞춤, 원본 빼기, 제목 지우기, 지운 자국 취소">↺ 초기화</button>
               <button class="tool-btn" id="origBtn" type="button" aria-pressed="false" title="원본 사진을 그림 위에 작게 넣어요. 드래그로 옮기고 모서리로 크기 조절">🖼️ 원본 넣기</button>
               <input type="text" id="titleInput" class="text-input tool-title" maxlength="30" placeholder="제목 (선택)" title="그림 위에 제목을 넣어요. 드래그로 옮길 수 있어요">
             </div>
           </div>
           <div class="canvas-wrap checker" id="resultWrap">
             <canvas id="resultCanvas"></canvas>
+            <div class="preview-empty" id="previewEmpty">
+              <span class="upload-icon big">🎨</span>
+              <p>왼쪽에서 이미지를 올리면 여기에 결과가 나와요</p>
+            </div>
             <div class="eraser-cursor" id="eraserCursor" hidden></div>
             <!-- 원본·제목은 캔버스에 직접 그려지고, 아래 박스는 드래그·크기조절 손잡이일 뿐 -->
             <div class="ov-box ov-drawing" id="ovDrawing" hidden>

@@ -144,7 +144,6 @@
       uploadThumb.hidden = false;
       controls.hidden = false;
       previewEmpty.hidden = true;
-      previewGrid.hidden = false;
       scheduleRender();
     };
     img.src = url;
@@ -627,6 +626,20 @@
   pageMode.addEventListener('change', onPageChange);
   [pageRatioW, pageRatioH].forEach((el) => el.addEventListener('input', onPageChange));
   fitBtn.addEventListener('click', () => { if (lastPaint) { fitDrawing(); composePage(); } });
+  // 초기화: 도화지 배치를 처음 상태로 (슬라이더는 그대로 — 그건 "기본값으로" 버튼)
+  document.getElementById('resetLayoutBtn').addEventListener('click', () => {
+    if (!lastPaint) return;
+    eraseStrokes = [];
+    updateEraserButtons();
+    origOn = false;
+    origBtn.setAttribute('aria-pressed', 'false');
+    titleInput.value = '';
+    objects.orig = { x: 0.74, y: 0.72, w: 0.24 };
+    objects.title = { x: 0.5, y: 0.95 };
+    fitDrawing();
+    selectBox(null);
+    repaintWithStrokes();
+  });
   origBtn.addEventListener('click', () => {
     origOn = !origOn;
     origBtn.setAttribute('aria-pressed', origOn ? 'true' : 'false');
