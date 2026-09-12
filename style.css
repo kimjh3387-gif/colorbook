@@ -263,6 +263,9 @@ body {
 /* ---------- 결과 위 배치 손잡이 (원본·제목) ---------- */
 .tools-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
 .tool-title { width: 140px; padding: 5px 8px; font-size: 12px; }
+.ratio-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 700; }
+.ratio-row .text-input { width: 64px; text-align: center; }
+
 .ov-box {
   position: absolute;
   cursor: move;

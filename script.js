@@ -63,6 +63,9 @@
   const printSheet = document.getElementById('printSheet');
   const printPageStyle = document.getElementById('printPageStyle');
   const pageMode = document.getElementById('pageMode');
+  const pageCustom = document.getElementById('pageCustom');
+  const pageRatioW = document.getElementById('pageRatioW');
+  const pageRatioH = document.getElementById('pageRatioH');
   const fitBtn = document.getElementById('fitBtn');
   const origBtn = document.getElementById('origBtn');
   const ovDrawing = document.getElementById('ovDrawing');
@@ -516,12 +519,25 @@
   let origOn = false;
   let drawingFitted = false; // 새 그림·도화지 비율 변경 뒤 첫 합성 때 그림을 도화지에 맞춘다
 
+  // 도화지 비율: A4(자동/세로/가로), 정사각, 그림 비율, 사용자 지정(가로:세로 직접 입력 — 유저마다 원하는 영역이 다르니까).
+  // 긴 변은 항상 PAGE_LONG.
   function pageSize() {
     const lw = lineCanvas.width || 1, lh = lineCanvas.height || 1;
     let mode = pageMode.value;
     if (mode === 'image') return { W: lw, H: lh };
     if (mode === 'auto') mode = lw > lh ? 'landscape' : 'portrait';
-    return mode === 'landscape' ? { W: PAGE_LONG, H: 1240 } : { W: 1240, H: PAGE_LONG };
+    let ratio; // 폭/높이
+    if (mode === 'landscape') ratio = 297 / 210;
+    else if (mode === 'portrait') ratio = 210 / 297;
+    else if (mode === 'square') ratio = 1;
+    else {
+      const rw = clamp(parseFloat(pageRatioW.value) || 1, 1, 100);
+      const rh = clamp(parseFloat(pageRatioH.value) || 1, 1, 100);
+      ratio = rw / rh;
+    }
+    return ratio >= 1
+      ? { W: PAGE_LONG, H: Math.round(PAGE_LONG / ratio) }
+      : { W: Math.round(PAGE_LONG * ratio), H: PAGE_LONG };
   }
 
   // 객체의 높이(도화지 높이 비율)
@@ -603,7 +619,13 @@
     schedulePrintPrep();
   }
 
-  pageMode.addEventListener('change', () => { drawingFitted = false; if (lastPaint) { fitDrawing(); drawingFitted = true; composePage(); } });
+  function onPageChange() {
+    pageCustom.hidden = pageMode.value !== 'custom';
+    drawingFitted = false;
+    if (lastPaint) { fitDrawing(); drawingFitted = true; composePage(); }
+  }
+  pageMode.addEventListener('change', onPageChange);
+  [pageRatioW, pageRatioH].forEach((el) => el.addEventListener('input', onPageChange));
   fitBtn.addEventListener('click', () => { if (lastPaint) { fitDrawing(); composePage(); } });
   origBtn.addEventListener('click', () => {
     origOn = !origOn;

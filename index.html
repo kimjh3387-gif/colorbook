@@ -109,8 +109,16 @@
             <option value="auto" selected>A4 자동 (그림 모양에 맞춰)</option>
             <option value="portrait">A4 세로</option>
             <option value="landscape">A4 가로</option>
+            <option value="square">정사각형</option>
             <option value="image">그림 비율 그대로</option>
+            <option value="custom">사용자 지정 비율</option>
           </select>
+          <div class="ratio-row" id="pageCustom" hidden>
+            <input type="number" id="pageRatioW" class="text-input" min="1" max="100" step="1" value="3" aria-label="가로 비율">
+            <span>:</span>
+            <input type="number" id="pageRatioH" class="text-input" min="1" max="100" step="1" value="4" aria-label="세로 비율">
+            <span class="hint" style="margin:0">가로 : 세로</span>
+          </div>
         </div>
 
         <button class="btn-secondary" id="resetBtn" type="button">기본값으로</button>
