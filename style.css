@@ -269,15 +269,14 @@ body {
 .ov-box {
   position: absolute;
   cursor: move;
-  outline: 2px dashed var(--accent);
+  outline: 2px dashed transparent; /* 선택된 것만 프레임·손잡이가 보인다. 빈 곳을 클릭하면 선택 해제 */
   outline-offset: 1px;
   touch-action: none;
 }
-/* 그림 손잡이는 평소엔 연하게, 올리면 진하게 (그림을 가리지 않게) */
-.ov-drawing { outline-color: rgba(232, 115, 74, 0.35); }
-.ov-drawing .ov-handle { opacity: 0.55; }
-.ov-drawing:hover { outline-color: var(--accent); }
-.ov-drawing:hover .ov-handle { opacity: 1; }
+.ov-box:hover { outline-color: rgba(232, 115, 74, 0.35); }
+.ov-box.selected { outline-color: var(--accent); }
+.ov-box .ov-handle { display: none; }
+.ov-box.selected .ov-handle { display: block; }
 .ov-handle {
   position: absolute;
   width: 14px;
@@ -302,7 +301,8 @@ body {
   padding: 2px 8px;
   touch-action: none;
 }
-.ov-title:hover { outline: 2px dashed var(--accent); }
+.ov-title:hover { outline: 2px dashed rgba(232, 115, 74, 0.35); }
+.ov-title.selected { outline: 2px dashed var(--accent); }
 
 .checkbox-label {
   display: flex;

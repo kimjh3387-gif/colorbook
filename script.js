@@ -684,6 +684,20 @@
   }
   window.addEventListener('resize', positionOverlays);
 
+  // 선택: 클릭한 객체만 프레임·손잡이를 보여주고, 빈 곳(캔버스)을 클릭하면 해제. 프레임이 계속 떠 있으면 거슬린다(사용자 요청)
+  let selectedEl = null;
+  function selectBox(el) {
+    if (selectedEl && selectedEl !== el) selectedEl.classList.remove('selected');
+    selectedEl = el;
+    if (el) el.classList.add('selected');
+  }
+  resultWrap.addEventListener('pointerdown', (e) => {
+    if (e.target === resultCanvas || e.target === resultWrap) selectBox(null);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && selectedEl) selectBox(null);
+  });
+
   // 드래그(그림·원본·제목)와 네 모서리 크기조절(반대쪽 모서리 고정, 비율 유지)
   let ovDrag = null;
   function bindBox(el, key) {
@@ -705,6 +719,7 @@
     el.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       e.preventDefault();
+      selectBox(el);
       el.setPointerCapture(e.pointerId);
       const [fx, fy] = pageFrac(e);
       ovDrag = { kind: 'move', key, dx: fx - objects[key].x, dy: fy - objects[key].y };
@@ -718,6 +733,7 @@
   ovTitle.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
     e.preventDefault();
+    selectBox(ovTitle);
     ovTitle.setPointerCapture(e.pointerId);
     const [fx, fy] = pageFrac(e);
     ovDrag = { kind: 'title', dx: fx - objects.title.x, dy: fy - objects.title.y };
